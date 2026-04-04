@@ -47,7 +47,9 @@ app.MapGet("/api/animations", () =>
         var dir = Path.Combine(processedPath, split);
         if (!Directory.Exists(dir)) continue;
 
-        foreach (var file in Directory.EnumerateFiles(dir, "*.bin").OrderBy(f => f))
+        foreach (var file in Directory.EnumerateFiles(dir, "*.bin")
+            .Where(f => !f.EndsWith(".clip.bin", StringComparison.OrdinalIgnoreCase))
+            .OrderBy(f => f))
         {
             var id = Path.GetFileNameWithoutExtension(file);
             var (frameCount, _, caption) = ReadBinHeader(file);
