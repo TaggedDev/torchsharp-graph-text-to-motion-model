@@ -1,5 +1,6 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
+# 
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "text-to-motion", "text-to-motion.csproj", "{682B7AFF-D9BB-4AAE-B527-93D5ADFA5426}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Preprocess", "Preprocess\Preprocess.csproj", "{323D8F27-96D2-4425-B434-F8262FD2F5A2}"
@@ -7,6 +8,8 @@ EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Train", "Train\Train.csproj", "{8DE1D25A-BBAF-47CF-A057-1085E3CB9455}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Inference", "Inference\Inference.csproj", "{6B0D2EEE-CA43-482C-8F67-939918AB97FD}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Data", "Data\Data.csproj", "{047E9398-7FAE-42D1-B6CF-F48FE9F6D118}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -30,5 +33,9 @@ Global
 		{6B0D2EEE-CA43-482C-8F67-939918AB97FD}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{6B0D2EEE-CA43-482C-8F67-939918AB97FD}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{6B0D2EEE-CA43-482C-8F67-939918AB97FD}.Release|Any CPU.Build.0 = Release|Any CPU
+		{047E9398-7FAE-42D1-B6CF-F48FE9F6D118}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{047E9398-7FAE-42D1-B6CF-F48FE9F6D118}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{047E9398-7FAE-42D1-B6CF-F48FE9F6D118}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{047E9398-7FAE-42D1-B6CF-F48FE9F6D118}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

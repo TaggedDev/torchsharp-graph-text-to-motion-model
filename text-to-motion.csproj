@@ -6,10 +6,11 @@
         <RootNamespace>text_to_motion</RootNamespace>
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
-        <DefaultItemExcludes>$(DefaultItemExcludes);Preprocess\**;Train\**;Inference\**</DefaultItemExcludes>
+        <DefaultItemExcludes>$(DefaultItemExcludes);Preprocess\**;Train\**;Inference\**;Data\**</DefaultItemExcludes>
     </PropertyGroup>
 
     <ItemGroup>
+      <ProjectReference Include="Data\Data.csproj" />
       <ProjectReference Include="Preprocess\Preprocess.csproj" />
       <ProjectReference Include="Train\Train.csproj" />
       <ProjectReference Include="Inference\Inference.csproj" />
