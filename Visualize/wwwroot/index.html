@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Motion Visualizer</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: monospace; background: #1a1a2e; color: #e0e0e0; display: flex; height: 100vh; overflow: hidden; }
+
+  #sidebar {
+    width: 320px; background: #16213e; display: flex; flex-direction: column;
+    border-right: 1px solid #0f3460;
+  }
+  #sidebar h2 { padding: 12px 16px; font-size: 14px; color: #e94560; border-bottom: 1px solid #0f3460; }
+  #search {
+    margin: 8px; padding: 6px 10px; background: #1a1a2e; border: 1px solid #0f3460;
+    color: #e0e0e0; font-family: monospace; font-size: 12px; border-radius: 4px;
+  }
+  #anim-list {
+    flex: 1; overflow-y: auto; list-style: none;
+  }
+  #anim-list li {
+    padding: 8px 16px; cursor: pointer; border-bottom: 1px solid #0f3460;
+    font-size: 12px; transition: background 0.15s;
+  }
+  #anim-list li:hover { background: #1a1a4e; }
+  #anim-list li.active { background: #0f3460; border-left: 3px solid #e94560; }
+  #anim-list li .id { color: #e94560; font-weight: bold; }
+  #anim-list li .split { color: #888; font-size: 10px; }
+  #anim-list li .caption { color: #aaa; font-size: 11px; display: block; margin-top: 2px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #anim-list li .frames { color: #666; font-size: 10px; }
+
+  #main { flex: 1; display: flex; flex-direction: column; }
+  #viewport { flex: 1; position: relative; }
+  #canvas { width: 100%; height: 100%; display: block; }
+  #caption-bar {
+    padding: 8px 16px; background: #16213e; border-bottom: 1px solid #0f3460;
+    font-size: 13px; min-height: 36px; color: #ccc;
+  }
+
+  #controls {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 16px; background: #16213e; border-top: 1px solid #0f3460;
+  }
+  #controls button {
+    background: #0f3460; border: 1px solid #e94560; color: #e94560;
+    padding: 6px 16px; cursor: pointer; font-family: monospace; font-size: 13px;
+    border-radius: 4px; min-width: 60px;
+  }
+  #controls button:hover { background: #e94560; color: #fff; }
+  #timeline { flex: 1; accent-color: #e94560; }
+  #frame-info { font-size: 12px; color: #888; min-width: 80px; text-align: right; }
+
+  #no-selection {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    color: #444; font-size: 16px;
+  }
+</style>
+</head>
+<body>
+
+<div id="sidebar">
+  <h2>Animations</h2>
+  <input id="search" type="text" placeholder="Filter by ID or caption...">
+  <ul id="anim-list"></ul>
+</div>
+
+<div id="main">
+  <div id="caption-bar">Select an animation from the list.</div>
+  <div id="viewport">
+    <canvas id="canvas"></canvas>
+    <div id="no-selection">Select an animation to begin</div>
+  </div>
+  <div id="controls">
+    <button id="play-btn" disabled>Play</button>
+    <input id="timeline" type="range" min="0" max="0" value="0" disabled>
+    <span id="frame-info">0 / 0</span>
+  </div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module" src="app.js"></script>
+</body>
+</html>

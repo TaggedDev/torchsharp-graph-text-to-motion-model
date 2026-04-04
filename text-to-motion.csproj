@@ -6,7 +6,7 @@
         <RootNamespace>text_to_motion</RootNamespace>
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
-        <DefaultItemExcludes>$(DefaultItemExcludes);Preprocess\**;Train\**;Inference\**;Data\**</DefaultItemExcludes>
+        <DefaultItemExcludes>$(DefaultItemExcludes);Preprocess\**;Train\**;Inference\**;Data\**;Visualize\**</DefaultItemExcludes>
     </PropertyGroup>
 
     <ItemGroup>
