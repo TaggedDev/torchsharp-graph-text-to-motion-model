@@ -12,6 +12,7 @@
 
     <ItemGroup>
       <PackageReference Include="Microsoft.Extensions.Configuration" Version="10.0.5" />
+      <PackageReference Include="Microsoft.ML.OnnxRuntime.Gpu.Windows" Version="1.24.4" />
       <PackageReference Include="NumSharp" Version="0.41.0-prerelease" />
     </ItemGroup>
 
