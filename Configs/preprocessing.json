@@ -1,3 +1,4 @@
 {
-  "DatasetPath": "D:/Code/CSharp/text-to-motion/dataset"
+  "DatasetPath": "D:/Code/CSharp/text-to-motion/dataset",
+  "OutputPath": "D:/Code/CSharp/text-to-motion/processed"
 }
