@@ -16,13 +16,13 @@ internal class Program
 
         Console.WriteLine($"Running mode={mode}");
 
-        mode switch
+        switch (mode)
         {
-            "preprocessing" => Preprocess.Run(config),
-            "training" => Train.Run(config),
-            "inference" => Inference.Run(config),
-            _ => throw new ArgumentException("Mode is invalid but should have been caught before.")
-        };
+            case "preprocessing": Preprocess.Run(config); break;
+            case "training": Train.Run(config); break;
+            case "inference": Inference.Run(config); break;
+            default: throw new ArgumentException("Mode is invalid but should have been caught before.");
+        }
     }
 
     private static bool ValidateMode(string s)
