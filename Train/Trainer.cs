@@ -85,9 +85,13 @@ public sealed class Trainer
     {
         _denoiser.train();
         var batches = _trainSet.GetEpochBatches(_batchSize, shuffle: true);
-        double epochLoss = 0;
         double totalBatchSeconds = 0;
         int step = 0;
+        int stepsSinceLog = 0;
+
+        // GPU-resident loss accumulators — avoid syncing every step
+        using var epochLossSum = zeros(1, device: _device);
+        using var runningLossSum = zeros(1, device: _device);
 
         foreach (var indices in batches)
         {
@@ -96,36 +100,51 @@ public sealed class Trainer
             using var scope = NewDisposeScope();
             using var batch = _trainSet.LoadBatch(indices, _device);
 
-            int B = (int)batch.Motion.shape[0];
-            var t = _scheduler.SampleTimesteps(B, _device);
+            int b = (int)batch.Motion.shape[0];
+            var t = _scheduler.SampleTimesteps(b, _device);
 
-            var noise = torch.randn_like(batch.Motion) * batch.Mask.unsqueeze(-1);
+            Tensor noise;
+            using (no_grad())
+                noise = randn_like(batch.Motion) * batch.Mask.unsqueeze(-1);
+
             var xt = _scheduler.QSample(batch.Motion, t, noise);
             var predicted = _denoiser.forward(xt, t, batch.Condition);
             var loss = _scheduler.Loss(predicted, noise, batch.Mask);
 
             _optimizer.zero_grad();
             loss.backward();
-            nn.utils.clip_grad_norm_(_denoiser.parameters(), _gradClipNorm);
+            if (_gradClipNorm > 0f)
+                nn.utils.clip_grad_norm_(_denoiser.parameters(), _gradClipNorm);
             _optimizer.step();
 
-            float lossVal = loss.item<float>();
-            epochLoss += lossVal;
+            // Accumulate on GPU; sync only at log intervals / end of epoch
+            using (no_grad())
+            {
+                var detached = loss.detach();
+                epochLossSum.add_(detached);
+                runningLossSum.add_(detached);
+            }
+
             step++;
+            stepsSinceLog++;
 
             sw.Stop();
             totalBatchSeconds += sw.Elapsed.TotalSeconds;
 
             if (step % _logEveryNSteps == 0)
             {
+                float avgLoss = (runningLossSum / stepsSinceLog).item<float>();
+                runningLossSum.zero_();
+                stepsSinceLog = 0;
+
                 double avgBatchSeconds = totalBatchSeconds / step;
                 Console.WriteLine(
                     $"  Epoch {epoch} step {step}/{batches.Length} " +
-                    $"loss={lossVal:F4} avg_batch_time={avgBatchSeconds:F4}s");
+                    $"avg_loss={avgLoss:F4} avg_batch_time={avgBatchSeconds:F4}s");
             }
         }
 
-        return (float)(epochLoss / Math.Max(step, 1));
+        return epochLossSum.item<float>() / Math.Max(step, 1);
     }
 
     private (float avgLoss, Dictionary<string, float> metrics) ComputeMetrics(
@@ -133,8 +152,9 @@ public sealed class Trainer
     {
         _denoiser.eval();
         var batches = dataset.GetEpochBatches(_batchSize, shuffle: false);
-        double totalLoss = 0;
         int count = 0;
+
+        using var lossSum = zeros(1, device: _device);
 
         using (no_grad())
         {
@@ -143,20 +163,20 @@ public sealed class Trainer
                 using var scope = NewDisposeScope();
                 using var batch = dataset.LoadBatch(indices, _device);
 
-                int B = (int)batch.Motion.shape[0];
-                var t = _scheduler.SampleTimesteps(B, _device);
+                int b = (int)batch.Motion.shape[0];
+                var t = _scheduler.SampleTimesteps(b, _device);
 
                 var noise = randn_like(batch.Motion) * batch.Mask.unsqueeze(-1);
                 var xt = _scheduler.QSample(batch.Motion, t, noise);
                 var predicted = _denoiser.forward(xt, t, batch.Condition);
                 var loss = _scheduler.Loss(predicted, noise, batch.Mask);
 
-                totalLoss += loss.item<float>();
+                lossSum.add_(loss);
                 count++;
             }
         }
 
-        float avgLoss = (float)(totalLoss / Math.Max(count, 1));
+        float avgLoss = lossSum.item<float>() / Math.Max(count, 1);
         var metrics = Evaluate();
         return (avgLoss, metrics);
     }

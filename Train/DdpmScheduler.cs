@@ -64,4 +64,72 @@ public sealed class DdpmScheduler
         var totalElements = mask.sum() * Data.Skeleton.FeatureDim;
         return masked.sum() / totalElements.clamp_min(1.0f);
     }
+
+    /// <summary>
+    /// Ancestral DDPM reverse sampling. Starts from pure noise and iteratively
+    /// denoises conditioned on <paramref name="cond"/>.
+    /// Returns a [B, frames, featureDim] tensor of generated motion in the
+    /// network's normalized feature space (caller must denormalize).
+    /// </summary>
+    public Tensor Sample(
+        GraphDenoiser model,
+        Tensor cond,
+        int frames,
+        int featureDim,
+        Device device,
+        long? seed = null)
+    {
+        model.eval();
+
+        using var noGrad = no_grad();
+        using var outerScope = NewDisposeScope();
+
+        if (seed.HasValue)
+            manual_seed(seed.Value);
+
+        int B = (int)cond.shape[0];
+        var xt = randn(new long[] { B, frames, featureDim }, dtype: float32, device: device);
+
+        for (int tInt = _numTimesteps - 1; tInt >= 0; tInt--)
+        {
+            using var stepScope = NewDisposeScope();
+
+            var tTensor = full(new long[] { B }, tInt, dtype: int64, device: device);
+            var predNoise = model.forward(xt, tTensor, cond);
+
+            float alphaT = _alphas[tInt].to(float32).item<float>();
+            float acpT = _alphasCumprod[tInt].to(float32).item<float>();
+            float acpPrev = tInt > 0
+                ? _alphasCumprod[tInt - 1].to(float32).item<float>()
+                : 1f;
+            float betaT = _betas[tInt].to(float32).item<float>();
+
+            float sqrtAcpT = MathF.Sqrt(acpT);
+            float sqrtOneMinusAcpT = MathF.Sqrt(1f - acpT);
+
+            var x0 = (xt - sqrtOneMinusAcpT * predNoise) / sqrtAcpT;
+
+            float coefX0 = MathF.Sqrt(acpPrev) * betaT / (1f - acpT);
+            float coefXt = MathF.Sqrt(alphaT) * (1f - acpPrev) / (1f - acpT);
+            var mean = coefX0 * x0 + coefXt * xt;
+
+            Tensor next;
+            if (tInt > 0)
+            {
+                float variance = betaT * (1f - acpPrev) / (1f - acpT);
+                var noise = randn_like(xt);
+                next = mean + MathF.Sqrt(variance) * noise;
+            }
+            else
+            {
+                next = mean;
+            }
+
+            // Promote the surviving tensor one scope up (into outerScope) so
+            // stepScope can free all intermediates on dispose.
+            xt = next.MoveToOuterDisposeScope();
+        }
+
+        return xt.detach().MoveToOuterDisposeScope();
+    }
 }

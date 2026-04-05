@@ -1,12 +1,12 @@
 {
   "ProcessedPath": "processed",
   "BatchSize": "32",
-  "MaxEpochs": "100",
+  "MaxEpochs": "50",
   "LearningRate": "0.0001",
   "NumTimesteps": "1000",
   "NodeHidden": "64",
   "NumGcnLayers": "4",
-  "GradClipNorm": "1.0",
+  "GradClipNorm": "0",
   "CheckpointDir": "checkpoints",
   "LogEveryNSteps": "50",
   "Device": "cuda"
