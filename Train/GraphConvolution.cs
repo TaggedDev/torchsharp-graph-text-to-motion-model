@@ -19,7 +19,6 @@ public sealed class GraphConvLayer : Module<Tensor, Tensor>
     {
         _linear = Linear(inFeatures, outFeatures);
         _adjNorm = NormalizeAdjacency(adjacency);
-        register_buffer("adj_norm", _adjNorm);
         RegisterComponents();
     }
 

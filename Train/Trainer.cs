@@ -1,3 +1,4 @@
+using System.Globalization;
 using Microsoft.Extensions.Configuration;
 using TorchSharp;
 using static TorchSharp.torch;
@@ -26,14 +27,14 @@ public sealed class Trainer
         _batchSize = int.Parse(config["BatchSize"] ?? "32");
         _maxEpochs = int.Parse(config["MaxEpochs"] ?? "100");
         _logEveryNSteps = int.Parse(config["LogEveryNSteps"] ?? "50");
-        _gradClipNorm = float.Parse(config["GradClipNorm"] ?? "1.0");
+        _gradClipNorm = float.Parse(config["GradClipNorm"] ?? "1.0", CultureInfo.InvariantCulture);
         _checkpointDir = config["CheckpointDir"] ?? "checkpoints";
         var deviceName = config["Device"] ?? "cuda";
 
         int numTimesteps = int.Parse(config["NumTimesteps"] ?? "1000");
         int nodeHidden = int.Parse(config["NodeHidden"] ?? "64");
         int numGcnLayers = int.Parse(config["NumGcnLayers"] ?? "4");
-        float lr = float.Parse(config["LearningRate"] ?? "0.0001");
+        float lr = float.Parse(config["LearningRate"] ?? "0.0001", CultureInfo.InvariantCulture);
 
         _device = new Device(deviceName);
 
@@ -57,6 +58,8 @@ public sealed class Trainer
 
     public void Run()
     {
+        const int saveCheckpointEach = 5;
+
         for (int epoch = 1; epoch <= _maxEpochs; epoch++)
         {
             var trainLoss = TrainEpoch(epoch);
@@ -69,7 +72,8 @@ public sealed class Trainer
                 $"train_eval_loss={trainEvalLoss:F4}  " +
                 $"val_loss={valLoss:F4}");
 
-            SaveCheckpoint(epoch);
+            if (epoch % saveCheckpointEach == 0)
+                SaveCheckpoint(epoch);
         }
 
         Console.WriteLine("Training complete. Running test evaluation...");
