@@ -62,7 +62,15 @@ let allAnimations = [];
 async function loadAnimationList() {
   const res = await fetch('/api/animations');
   allAnimations = await res.json();
-  renderList(allAnimations);
+  renderList(filterAnimations(searchInput.value));
+}
+
+function filterAnimations(q) {
+  q = (q || '').toLowerCase();
+  if (!q) return allAnimations;
+  return allAnimations.filter(a =>
+    a.id.toLowerCase().includes(q) || (a.caption || '').toLowerCase().includes(q)
+  );
 }
 
 function renderList(anims) {
@@ -77,6 +85,82 @@ function renderList(anims) {
     animList.appendChild(li);
   }
 }
+
+async function loadModels() {
+  const sel = document.getElementById('gen-model');
+  const btn = document.getElementById('gen-btn');
+  try {
+    const res = await fetch('/api/models');
+    const models = await res.json();
+    sel.innerHTML = '';
+    if (!models || models.length === 0) {
+      const o = document.createElement('option');
+      o.value = ''; o.textContent = '(no checkpoints)';
+      sel.appendChild(o);
+      btn.disabled = true;
+      return;
+    }
+    for (const m of models) {
+      const o = document.createElement('option');
+      o.value = m.name; o.textContent = m.name;
+      sel.appendChild(o);
+    }
+    btn.disabled = false;
+  } catch (e) {
+    sel.innerHTML = '<option value="">(error)</option>';
+    btn.disabled = true;
+  }
+}
+
+async function handleGenerate() {
+  const btn = document.getElementById('gen-btn');
+  const model = document.getElementById('gen-model').value;
+  const prompt = document.getElementById('gen-prompt').value.trim();
+  const frames = parseInt(document.getElementById('gen-frames').value) || 120;
+  const status = document.getElementById('gen-status');
+
+  status.classList.remove('error');
+  if (!model) { status.textContent = 'No model selected'; status.classList.add('error'); return; }
+  if (!prompt) { status.textContent = 'Enter a prompt'; status.classList.add('error'); return; }
+
+  btn.disabled = true;
+  status.textContent = 'Generating... (this may take a while)';
+
+  try {
+    const res = await fetch('/api/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model, prompt, frames })
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      status.textContent = 'Error: ' + text;
+      status.classList.add('error');
+      return;
+    }
+    const info = await res.json();
+    status.textContent = `Done: ${info.id}`;
+
+    await loadAnimationList();
+    // Auto-select the new item
+    const li = [...document.querySelectorAll('#anim-list li')]
+      .find(el => el.dataset.split === info.split && el.dataset.id === info.id);
+    if (li) {
+      li.click();
+      li.scrollIntoView({ block: 'nearest' });
+    }
+  } catch (e) {
+    status.textContent = 'Error: ' + e.message;
+    status.classList.add('error');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+document.getElementById('gen-btn').addEventListener('click', handleGenerate);
+document.getElementById('gen-prompt').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') handleGenerate();
+});
 
 function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 
@@ -94,7 +178,7 @@ async function selectAnimation(split, id, li) {
   document.querySelectorAll('#anim-list li').forEach(el => el.classList.remove('active'));
   if (li) li.classList.add('active');
 
-  const res = await fetch(`/api/animation/${split}/${id}`);
+  const res = await fetch(`/api/animation/${split}/${encodeURIComponent(id)}`);
   animData = await res.json();
   edgeData = animData.edges;
   jointGroupData = animData.jointGroup;
@@ -241,3 +325,4 @@ function animate(time) {
 resize();
 animate(0);
 loadAnimationList();
+loadModels();

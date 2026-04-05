@@ -1,12 +1,22 @@
-using System.Runtime.InteropServices;
+using System.Collections.Concurrent;
 using System.Text;
-using System.Text.Json;
 
 var builder = WebApplication.CreateBuilder(args);
 var app = builder.Build();
 
-var processedPath = Path.GetFullPath(
-    Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "processed"));
+var solutionRoot = Path.GetFullPath(
+    Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
+var processedPath = Path.Combine(solutionRoot, "processed");
+var checkpointsPath = Path.Combine(solutionRoot, "checkpoints");
+var generationsPath = Path.Combine(solutionRoot, "generations");
+var trainingCfg = Path.Combine(solutionRoot, "Configs", "training.json");
+var preprocessingCfg = Path.Combine(solutionRoot, "Configs", "preprocessing.json");
+var meanPath = Path.Combine(processedPath, "mean.bin");
+var stdPath = Path.Combine(processedPath, "std.bin");
+
+// Engine cache: one per checkpoint. GPU work is serialized by the semaphore.
+var engineCache = new ConcurrentDictionary<string, InferenceEngine>();
+var engineLock = new SemaphoreSlim(1, 1);
 
 // Skeleton edges from Data/Skeleton.cs (parent array)
 int[] parent = [-1, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 9, 9, 12, 13, 14, 16, 17, 18, 19];
@@ -56,15 +66,152 @@ app.MapGet("/api/animations", () =>
             result.Add(new { id, split, frameCount, caption });
         }
     }
+
+    // Generated files live under generations/{modelName}/*.bin
+    if (Directory.Exists(generationsPath))
+    {
+        foreach (var modelDir in Directory.EnumerateDirectories(generationsPath))
+        {
+            var modelName = Path.GetFileName(modelDir);
+            var splitLabel = $"generations/{modelName}";
+            foreach (var file in Directory.EnumerateFiles(modelDir, "*.bin")
+                .OrderByDescending(File.GetLastWriteTime))
+            {
+                var id = Path.GetFileNameWithoutExtension(file);
+                var (frameCount, _, caption) = ReadBinHeader(file);
+                result.Add(new { id, split = splitLabel, frameCount, caption });
+            }
+        }
+    }
+
     return Results.Json(result);
 });
 
-app.MapGet("/api/animation/{split}/{id}", (string split, string id) =>
+// Catch-all so split can be nested like "generations/model_epoch50_..."
+app.MapGet("/api/animation/{**path}", (string path) =>
 {
-    var file = Path.Combine(processedPath, split, $"{id}.bin");
-    if (!File.Exists(file))
+    var lastSlash = path.LastIndexOf('/');
+    if (lastSlash < 0) return Results.NotFound();
+    var split = path[..lastSlash];
+    var id = path[(lastSlash + 1)..];
+
+    string file;
+    if (split.StartsWith("generations/", StringComparison.Ordinal))
+    {
+        var modelName = split["generations/".Length..];
+        file = Path.Combine(generationsPath, modelName, $"{id}.bin");
+    }
+    else
+    {
+        file = Path.Combine(processedPath, split, $"{id}.bin");
+    }
+
+    // Path traversal guard
+    var fullFile = Path.GetFullPath(file);
+    if (!fullFile.StartsWith(Path.GetFullPath(processedPath), StringComparison.OrdinalIgnoreCase)
+        && !fullFile.StartsWith(Path.GetFullPath(generationsPath), StringComparison.OrdinalIgnoreCase))
+    {
+        return Results.NotFound();
+    }
+
+    if (!File.Exists(fullFile))
         return Results.NotFound();
 
+    return BuildAnimationResponse(fullFile);
+});
+
+// List available checkpoints
+app.MapGet("/api/models", () =>
+{
+    if (!Directory.Exists(checkpointsPath))
+        return Results.Json(Array.Empty<object>());
+
+    var items = Directory.EnumerateFiles(checkpointsPath, "*.pt")
+        .OrderByDescending(File.GetLastWriteTime)
+        .Select(f => new
+        {
+            name = Path.GetFileNameWithoutExtension(f),
+            file = Path.GetFileName(f)
+        })
+        .ToArray();
+    return Results.Json(items);
+});
+
+// Run inference
+app.MapPost("/api/generate", async (GenerateRequest req) =>
+{
+    if (string.IsNullOrWhiteSpace(req.Model))
+        return Results.BadRequest(new { error = "Model is required" });
+    if (string.IsNullOrWhiteSpace(req.Prompt))
+        return Results.BadRequest(new { error = "Prompt is required" });
+
+    int frames = req.Frames <= 0 ? 120 : req.Frames;
+    frames = Math.Clamp(frames, 1, 300);
+
+    var modelFile = req.Model.EndsWith(".pt", StringComparison.OrdinalIgnoreCase)
+        ? req.Model
+        : req.Model + ".pt";
+    var ckpt = Path.Combine(checkpointsPath, modelFile);
+    if (!File.Exists(ckpt))
+        return Results.NotFound(new { error = "Checkpoint not found" });
+
+    await engineLock.WaitAsync();
+    try
+    {
+        InferenceEngine engine;
+        try
+        {
+            engine = engineCache.GetOrAdd(ckpt, p => new InferenceEngine(
+                p, trainingCfg, preprocessingCfg, meanPath, stdPath));
+        }
+        catch (Exception ex)
+        {
+            return Results.Problem(
+                detail: $"Failed to load engine: {ex.Message}",
+                statusCode: 500);
+        }
+
+        string binPath;
+        try
+        {
+            binPath = engine.Generate(req.Prompt, frames, generationsPath);
+        }
+        catch (Exception ex)
+        {
+            return Results.Problem(
+                detail: $"Generation failed: {ex.Message}",
+                statusCode: 500);
+        }
+
+        var modelName = Path.GetFileNameWithoutExtension(ckpt);
+        var id = Path.GetFileNameWithoutExtension(binPath);
+        var (frameCount, _, caption) = ReadBinHeader(binPath);
+        return Results.Json(new
+        {
+            split = $"generations/{modelName}",
+            id,
+            frameCount,
+            caption
+        });
+    }
+    finally
+    {
+        engineLock.Release();
+    }
+});
+
+// Fallback to index.html for SPA
+app.MapFallbackToFile("index.html");
+
+Console.WriteLine($"Solution root: {solutionRoot}");
+Console.WriteLine($"Data path:     {processedPath}");
+Console.WriteLine($"Checkpoints:   {checkpointsPath}");
+Console.WriteLine($"Generations:   {generationsPath}");
+app.Run();
+
+
+IResult BuildAnimationResponse(string file)
+{
     var (frameCount, featureDim, caption) = ReadBinHeader(file);
     var motionData = ReadBinFrames(file, frameCount, featureDim);
 
@@ -73,12 +220,11 @@ app.MapGet("/api/animation/{split}/{id}", (string split, string id) =>
     var positions = new float[frameCount][];
     for (int f = 0; f < frameCount; f++)
     {
-        // 22 joints x 3 = 66 floats per frame
         var frame = new float[66];
 
         // Joint 0 (pelvis): x=0, y=rootHeight, z=0
         frame[0] = 0f;
-        frame[1] = motionData[f * featureDim + 3]; // root height Y
+        frame[1] = motionData[f * featureDim + 3];
         frame[2] = 0f;
 
         // Joints 1-21: copy from [4:67]
@@ -97,13 +243,7 @@ app.MapGet("/api/animation/{split}/{id}", (string split, string id) =>
         jointGroup,
         positions
     });
-});
-
-// Fallback to index.html for SPA
-app.MapFallbackToFile("index.html");
-
-Console.WriteLine($"Data path: {processedPath}");
-app.Run();
+}
 
 static (int frameCount, int featureDim, string caption) ReadBinHeader(string path)
 {
@@ -137,3 +277,5 @@ static float[] ReadBinFrames(string path, int frameCount, int featureDim)
     Buffer.BlockCopy(bytes, 0, floats, 0, byteCount);
     return floats;
 }
+
+record GenerateRequest(string Model, string Prompt, int Frames);

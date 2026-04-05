@@ -56,11 +56,44 @@
     position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
     color: #444; font-size: 16px;
   }
+
+  #gen-panel {
+    padding: 8px 12px 12px 12px; background: #12182b;
+    border-bottom: 1px solid #0f3460; display: flex; flex-direction: column; gap: 6px;
+  }
+  #gen-panel h2 { padding: 0 0 4px 0; border: none; }
+  #gen-panel select, #gen-panel input[type=text], #gen-panel input[type=number] {
+    padding: 6px 8px; background: #1a1a2e; border: 1px solid #0f3460;
+    color: #e0e0e0; font-family: monospace; font-size: 12px; border-radius: 4px;
+  }
+  #gen-panel button {
+    background: #0f3460; border: 1px solid #e94560; color: #e94560;
+    padding: 6px 12px; cursor: pointer; font-family: monospace; font-size: 12px;
+    border-radius: 4px;
+  }
+  #gen-panel button:hover:not(:disabled) { background: #e94560; color: #fff; }
+  #gen-panel button:disabled { opacity: 0.5; cursor: not-allowed; }
+  #gen-frames-row { display: flex; gap: 6px; align-items: center; }
+  #gen-frames-row label { font-size: 11px; color: #888; }
+  #gen-frames { width: 80px; }
+  #gen-status { font-size: 11px; color: #888; min-height: 14px; }
+  #gen-status.error { color: #e94560; }
 </style>
 </head>
 <body>
 
 <div id="sidebar">
+  <div id="gen-panel">
+    <h2>Generate</h2>
+    <select id="gen-model"></select>
+    <input id="gen-prompt" type="text" placeholder="Describe a motion...">
+    <div id="gen-frames-row">
+      <label for="gen-frames">Frames:</label>
+      <input id="gen-frames" type="number" value="120" min="20" max="300">
+      <button id="gen-btn">Generate</button>
+    </div>
+    <div id="gen-status"></div>
+  </div>
   <h2>Animations</h2>
   <input id="search" type="text" placeholder="Filter by ID or caption...">
   <ul id="anim-list"></ul>
