@@ -117,6 +117,7 @@ async function handleGenerate() {
   const model = document.getElementById('gen-model').value;
   const prompt = document.getElementById('gen-prompt').value.trim();
   const frames = parseInt(document.getElementById('gen-frames').value) || 120;
+  const guidanceScale = parseFloat(document.getElementById('gen-cfg').value) || 2.5;
   const status = document.getElementById('gen-status');
 
   status.classList.remove('error');
@@ -130,7 +131,7 @@ async function handleGenerate() {
     const res = await fetch('/api/generate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model, prompt, frames })
+      body: JSON.stringify({ model, prompt, frames, guidanceScale })
     });
     if (!res.ok) {
       const text = await res.text();

@@ -82,7 +82,7 @@ public sealed class MotionDataset
         return batches.ToArray();
     }
 
-    public MotionBatch LoadBatch(int[] indices, Device device)
+    public MotionBatch LoadBatch(int[] indices, Device device, float condDropoutProb = 0f)
     {
         int B = indices.Length;
         int featDim = Data.Skeleton.FeatureDim;
@@ -112,9 +112,18 @@ public sealed class MotionDataset
             for (int t = 0; t < frames; t++)
                 maskBuf[maskOff + t] = 1.0f;
 
-            // Pick a random CLIP embedding
-            var clip = clips[_rng.Next(clips.Length)];
-            Array.Copy(clip, 0, condBuf, i * 512, 512);
+            // Classifier-free guidance: with probability condDropoutProb drop
+            // the CLIP embedding (leave zeros) so the model learns both
+            // conditional and unconditional noise prediction.
+            if (condDropoutProb > 0f && _rng.NextDouble() < condDropoutProb)
+            {
+                // condBuf slice is already zero-initialized — leave as-is.
+            }
+            else
+            {
+                var clip = clips[_rng.Next(clips.Length)];
+                Array.Copy(clip, 0, condBuf, i * 512, 512);
+            }
         }
 
         var motionT = tensor(motionBuf, [B, tMax, featDim], dtype: float32).to(device);

@@ -75,7 +75,7 @@
   #gen-panel button:disabled { opacity: 0.5; cursor: not-allowed; }
   #gen-frames-row { display: flex; gap: 6px; align-items: center; }
   #gen-frames-row label { font-size: 11px; color: #888; }
-  #gen-frames { width: 80px; }
+  #gen-frames, #gen-cfg { width: 70px; }
   #gen-status { font-size: 11px; color: #888; min-height: 14px; }
   #gen-status.error { color: #e94560; }
 </style>
@@ -90,6 +90,8 @@
     <div id="gen-frames-row">
       <label for="gen-frames">Frames:</label>
       <input id="gen-frames" type="number" value="120" min="20" max="300">
+      <label for="gen-cfg">CFG:</label>
+      <input id="gen-cfg" type="number" value="2.5" min="1.0" max="10.0" step="0.5">
       <button id="gen-btn">Generate</button>
     </div>
     <div id="gen-status"></div>

@@ -1,4 +1,5 @@
 using static TorchSharp.torch;
+using static TorchSharp.torch.nn;
 
 namespace Training;
 
@@ -66,17 +67,21 @@ public sealed class DdpmScheduler
     }
 
     /// <summary>
-    /// Ancestral DDPM reverse sampling. Starts from pure noise and iteratively
-    /// denoises conditioned on <paramref name="cond"/>.
-    /// Returns a [B, frames, featureDim] tensor of generated motion in the
-    /// network's normalized feature space (caller must denormalize).
+    /// Ancestral DDPM reverse sampling with optional classifier-free guidance.
+    /// When <paramref name="guidanceScale"/> &gt; 1 the model is queried twice per
+    /// step — once with <paramref name="cond"/>, once with <paramref name="nullCond"/>
+    /// — and the predicted noise is extrapolated along the (cond − null) axis.
+    /// Returns a [B, frames, featureDim] tensor in normalized feature space.
     /// </summary>
     public Tensor Sample(
-        GraphDenoiser model,
+        Module<Tensor, Tensor, Tensor, Tensor> model,
         Tensor cond,
+        Tensor nullCond,
         int frames,
         int featureDim,
         Device device,
+        float guidanceScale = 2.5f,
+        float x0ClipValue = 0f,
         long? seed = null)
     {
         model.eval();
@@ -88,14 +93,34 @@ public sealed class DdpmScheduler
             manual_seed(seed.Value);
 
         int B = (int)cond.shape[0];
+        bool useCfg = guidanceScale > 1f + 1e-6f;
+
+        // For CFG we batch cond + nullCond together so the model makes a
+        // single forward pass of size 2B per step.
+        Tensor condBatched = useCfg ? cat(new[] { cond, nullCond }, dim: 0) : cond;
+
         var xt = randn(new long[] { B, frames, featureDim }, dtype: float32, device: device);
 
         for (int tInt = _numTimesteps - 1; tInt >= 0; tInt--)
         {
             using var stepScope = NewDisposeScope();
 
-            var tTensor = full(new long[] { B }, tInt, dtype: int64, device: device);
-            var predNoise = model.forward(xt, tTensor, cond);
+            Tensor predNoise;
+            if (useCfg)
+            {
+                var xtBatched = cat(new[] { xt, xt }, dim: 0);
+                var tBatched = full(new long[] { 2 * B }, tInt, dtype: int64, device: device);
+                var bothNoise = model.forward(xtBatched, tBatched, condBatched);
+                var chunks = bothNoise.chunk(2, dim: 0);
+                var epsCond = chunks[0];
+                var epsUncond = chunks[1];
+                predNoise = epsUncond + guidanceScale * (epsCond - epsUncond);
+            }
+            else
+            {
+                var tTensor = full(new long[] { B }, tInt, dtype: int64, device: device);
+                predNoise = model.forward(xt, tTensor, condBatched);
+            }
 
             float alphaT = _alphas[tInt].to(float32).item<float>();
             float acpT = _alphasCumprod[tInt].to(float32).item<float>();
@@ -108,6 +133,8 @@ public sealed class DdpmScheduler
             float sqrtOneMinusAcpT = MathF.Sqrt(1f - acpT);
 
             var x0 = (xt - sqrtOneMinusAcpT * predNoise) / sqrtAcpT;
+            if (x0ClipValue > 0f)
+                x0 = x0.clamp(-x0ClipValue, x0ClipValue);
 
             float coefX0 = MathF.Sqrt(acpPrev) * betaT / (1f - acpT);
             float coefXt = MathF.Sqrt(alphaT) * (1f - acpPrev) / (1f - acpT);

@@ -13,6 +13,8 @@ public sealed class Trainer
     private readonly int _logEveryNSteps;
     private readonly float _gradClipNorm;
     private readonly string _checkpointDir;
+    private readonly string _checkpointFilePrefix;
+    private readonly float _condDropoutProb;
 
     private readonly MotionDataset _trainSet;
     private readonly MotionDataset _valSet;
@@ -28,12 +30,21 @@ public sealed class Trainer
         _maxEpochs = int.Parse(config["MaxEpochs"] ?? "100");
         _logEveryNSteps = int.Parse(config["LogEveryNSteps"] ?? "50");
         _gradClipNorm = float.Parse(config["GradClipNorm"] ?? "1.0", CultureInfo.InvariantCulture);
-        _checkpointDir = config["CheckpointDir"] ?? "checkpoints";
+
+        // v2 checkpoints land in a subdirectory so legacy .pt files stay
+        // accessible for A/B comparison in the Visualize UI.
+        var checkpointRoot = config["CheckpointDir"] ?? "checkpoints";
+        var checkpointSubdir = config["CheckpointSubdir"] ?? "v2";
+        _checkpointDir = Path.Combine(checkpointRoot, checkpointSubdir);
+        _checkpointFilePrefix = string.IsNullOrEmpty(checkpointSubdir) ? "model" : $"model_{checkpointSubdir}";
+        _condDropoutProb = float.Parse(config["CondDropoutProb"] ?? "0.1", CultureInfo.InvariantCulture);
+
         var deviceName = config["Device"] ?? "cuda";
 
         int numTimesteps = int.Parse(config["NumTimesteps"] ?? "1000");
         int nodeHidden = int.Parse(config["NodeHidden"] ?? "64");
-        int numGcnLayers = int.Parse(config["NumGcnLayers"] ?? "4");
+        int numStBlocks = int.Parse(config["NumStBlocks"] ?? config["NumGcnLayers"] ?? "4");
+        int numHeads = int.Parse(config["NumHeads"] ?? "4");
         float lr = float.Parse(config["LearningRate"] ?? "0.0001", CultureInfo.InvariantCulture);
 
         _device = new Device(deviceName);
@@ -47,7 +58,7 @@ public sealed class Trainer
         _scheduler = new DdpmScheduler(numTimesteps);
         _scheduler.To(_device);
 
-        _denoiser = new GraphDenoiser(numGcnLayers, nodeHidden);
+        _denoiser = new GraphDenoiser(numStBlocks, nodeHidden, numHeads);
         _denoiser.to(_device);
         _denoiser.MoveGcnBuffers(_device);
 
@@ -98,7 +109,7 @@ public sealed class Trainer
             var sw = System.Diagnostics.Stopwatch.StartNew();
 
             using var scope = NewDisposeScope();
-            using var batch = _trainSet.LoadBatch(indices, _device);
+            using var batch = _trainSet.LoadBatch(indices, _device, _condDropoutProb);
 
             int b = (int)batch.Motion.shape[0];
             var t = _scheduler.SampleTimesteps(b, _device);
@@ -193,7 +204,7 @@ public sealed class Trainer
     private void SaveCheckpoint(int epoch)
     {
         var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
-        var path = Path.Combine(_checkpointDir, $"model_epoch{epoch}_{timestamp}.pt");
+        var path = Path.Combine(_checkpointDir, $"{_checkpointFilePrefix}_epoch{epoch}_{timestamp}.pt");
         _denoiser.save(path);
         Console.WriteLine($"  Checkpoint saved: {path}");
     }

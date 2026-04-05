@@ -120,21 +120,30 @@ app.MapGet("/api/animation/{**path}", (string path) =>
     return BuildAnimationResponse(fullFile);
 });
 
-// List available checkpoints
+// List available checkpoints (root + one level of subdirectories, e.g. checkpoints/v2/)
 app.MapGet("/api/models", () =>
 {
     if (!Directory.Exists(checkpointsPath))
         return Results.Json(Array.Empty<object>());
 
-    var items = Directory.EnumerateFiles(checkpointsPath, "*.pt")
-        .OrderByDescending(File.GetLastWriteTime)
-        .Select(f => new
-        {
-            name = Path.GetFileNameWithoutExtension(f),
-            file = Path.GetFileName(f)
-        })
+    var items = new List<(string name, DateTime lastWrite)>();
+
+    foreach (var f in Directory.EnumerateFiles(checkpointsPath, "*.pt"))
+        items.Add((Path.GetFileNameWithoutExtension(f), File.GetLastWriteTimeUtc(f)));
+
+    foreach (var sub in Directory.EnumerateDirectories(checkpointsPath))
+    {
+        var subName = Path.GetFileName(sub);
+        foreach (var f in Directory.EnumerateFiles(sub, "*.pt"))
+            items.Add(($"{subName}/{Path.GetFileNameWithoutExtension(f)}", File.GetLastWriteTimeUtc(f)));
+    }
+
+    var sorted = items
+        .OrderByDescending(x => x.lastWrite)
+        .Select(x => new { name = x.name })
         .ToArray();
-    return Results.Json(items);
+
+    return Results.Json(sorted);
 });
 
 // Run inference
@@ -148,10 +157,19 @@ app.MapPost("/api/generate", async (GenerateRequest req) =>
     int frames = req.Frames <= 0 ? 120 : req.Frames;
     frames = Math.Clamp(frames, 1, 300);
 
-    var modelFile = req.Model.EndsWith(".pt", StringComparison.OrdinalIgnoreCase)
-        ? req.Model
-        : req.Model + ".pt";
-    var ckpt = Path.Combine(checkpointsPath, modelFile);
+    float guidanceScale = req.GuidanceScale <= 0 ? 2.5f : req.GuidanceScale;
+    guidanceScale = Math.Clamp(guidanceScale, 1f, 10f);
+
+    // Model name may be "model_epoch50_..." (legacy root) or "v2/model_v2_epoch...".
+    // Resolve safely relative to checkpointsPath and reject path traversal.
+    var relPath = req.Model.Replace('\\', '/');
+    if (relPath.Contains("..") || Path.IsPathRooted(relPath))
+        return Results.BadRequest(new { error = "Invalid model name" });
+    if (!relPath.EndsWith(".pt", StringComparison.OrdinalIgnoreCase))
+        relPath += ".pt";
+    var ckpt = Path.GetFullPath(Path.Combine(checkpointsPath, relPath));
+    if (!ckpt.StartsWith(Path.GetFullPath(checkpointsPath), StringComparison.OrdinalIgnoreCase))
+        return Results.BadRequest(new { error = "Invalid model path" });
     if (!File.Exists(ckpt))
         return Results.NotFound(new { error = "Checkpoint not found" });
 
@@ -174,7 +192,7 @@ app.MapPost("/api/generate", async (GenerateRequest req) =>
         string binPath;
         try
         {
-            binPath = engine.Generate(req.Prompt, frames, generationsPath);
+            binPath = engine.Generate(req.Prompt, frames, generationsPath, guidanceScale);
         }
         catch (Exception ex)
         {
@@ -278,4 +296,4 @@ static float[] ReadBinFrames(string path, int frameCount, int featureDim)
     return floats;
 }
 
-record GenerateRequest(string Model, string Prompt, int Frames);
+record GenerateRequest(string Model, string Prompt, int Frames, float GuidanceScale);
