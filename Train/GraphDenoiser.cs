@@ -115,10 +115,10 @@ public sealed class GraphDenoiser : Module<Tensor, Tensor, Tensor, Tensor>
     private static Tensor SinusoidalEmbedding(Tensor t, int dim)
     {
         int half = dim / 2;
-        var freqs = torch.exp(
-            -Math.Log(10000.0) * torch.arange(half, dtype: float32, device: t.device) / half
+        var freqs = exp(
+            -Math.Log(10000.0) * arange(half, dtype: float32, device: t.device) / half
         );
         var args = t.to(float32).unsqueeze(1) * freqs.unsqueeze(0);   // [B, half]
-        return torch.cat([args.cos(), args.sin()], dim: 1);            // [B, dim]
+        return cat([args.cos(), args.sin()], dim: 1);            // [B, dim]
     }
 }

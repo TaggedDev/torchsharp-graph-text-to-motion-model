@@ -18,7 +18,7 @@ public sealed class Trainer
     private readonly MotionDataset _testSet;
     private readonly GraphDenoiser _denoiser;
     private readonly DdpmScheduler _scheduler;
-    private readonly torch.optim.Optimizer _optimizer;
+    private readonly optim.Optimizer _optimizer;
 
     public Trainer(IConfigurationRoot config)
     {
@@ -50,7 +50,7 @@ public sealed class Trainer
         _denoiser.to(_device);
         _denoiser.MoveGcnBuffers(_device);
 
-        _optimizer = torch.optim.AdamW(_denoiser.parameters(), lr: lr, weight_decay: 1e-4);
+        _optimizer = optim.AdamW(_denoiser.parameters(), lr: lr, weight_decay: 1e-4);
 
         Directory.CreateDirectory(_checkpointDir);
     }
@@ -60,8 +60,8 @@ public sealed class Trainer
         for (int epoch = 1; epoch <= _maxEpochs; epoch++)
         {
             var trainLoss = TrainEpoch(epoch);
-            var (valLoss, _) = ComputeMetrics(_valSet, "val");
-            var (trainEvalLoss, _) = ComputeMetrics(_trainSet, "train");
+            var (valLoss, _) = ComputeMetrics(_valSet);
+            var (trainEvalLoss, _) = ComputeMetrics(_trainSet);
 
             Console.WriteLine(
                 $"Epoch {epoch}/{_maxEpochs}  " +
@@ -73,7 +73,7 @@ public sealed class Trainer
         }
 
         Console.WriteLine("Training complete. Running test evaluation...");
-        var (testLoss, testMetrics) = ComputeMetrics(_testSet, "test");
+        var (testLoss, testMetrics) = ComputeMetrics(_testSet);
         Console.WriteLine($"Test loss={testLoss:F4}  metrics=[{FormatMetrics(testMetrics)}]");
     }
 
@@ -99,7 +99,7 @@ public sealed class Trainer
 
             _optimizer.zero_grad();
             loss.backward();
-            torch.nn.utils.clip_grad_norm_(_denoiser.parameters(), _gradClipNorm);
+            nn.utils.clip_grad_norm_(_denoiser.parameters(), _gradClipNorm);
             _optimizer.step();
 
             float lossVal = loss.item<float>();
@@ -114,14 +114,14 @@ public sealed class Trainer
     }
 
     private (float avgLoss, Dictionary<string, float> metrics) ComputeMetrics(
-        MotionDataset dataset, string splitName)
+        MotionDataset dataset)
     {
         _denoiser.eval();
         var batches = dataset.GetEpochBatches(_batchSize, shuffle: false);
         double totalLoss = 0;
         int count = 0;
 
-        using (torch.no_grad())
+        using (no_grad())
         {
             foreach (var indices in batches)
             {
@@ -131,7 +131,7 @@ public sealed class Trainer
                 int B = (int)batch.Motion.shape[0];
                 var t = _scheduler.SampleTimesteps(B, _device);
 
-                var noise = torch.randn_like(batch.Motion) * batch.Mask.unsqueeze(-1);
+                var noise = randn_like(batch.Motion) * batch.Mask.unsqueeze(-1);
                 var xt = _scheduler.QSample(batch.Motion, t, noise);
                 var predicted = _denoiser.forward(xt, t, batch.Condition);
                 var loss = _scheduler.Loss(predicted, noise, batch.Mask);

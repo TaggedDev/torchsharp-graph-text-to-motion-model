@@ -1,4 +1,3 @@
-using TorchSharp;
 using static TorchSharp.torch;
 
 namespace Training;
@@ -20,7 +19,7 @@ public sealed class DdpmScheduler
     {
         _numTimesteps = numTimesteps;
 
-        _betas = torch.linspace(betaStart, betaEnd, numTimesteps, dtype: float64);
+        _betas = linspace(betaStart, betaEnd, numTimesteps, dtype: float64);
         _alphas = 1.0 - _betas;
         _alphasCumprod = _alphas.cumprod(dim: 0);
         _sqrtAlphasCumprod = _alphasCumprod.sqrt();
@@ -41,7 +40,7 @@ public sealed class DdpmScheduler
     /// </summary>
     public Tensor SampleTimesteps(int batchSize, Device device)
     {
-        return torch.randint(0, _numTimesteps, batchSize, dtype: int64, device: device);
+        return randint(0, _numTimesteps, batchSize, dtype: int64, device: device);
     }
 
     /// <summary>
