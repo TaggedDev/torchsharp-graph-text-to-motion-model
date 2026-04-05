@@ -86,10 +86,13 @@ public sealed class Trainer
         _denoiser.train();
         var batches = _trainSet.GetEpochBatches(_batchSize, shuffle: true);
         double epochLoss = 0;
+        double totalBatchSeconds = 0;
         int step = 0;
 
         foreach (var indices in batches)
         {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+
             using var scope = NewDisposeScope();
             using var batch = _trainSet.LoadBatch(indices, _device);
 
@@ -110,8 +113,16 @@ public sealed class Trainer
             epochLoss += lossVal;
             step++;
 
+            sw.Stop();
+            totalBatchSeconds += sw.Elapsed.TotalSeconds;
+
             if (step % _logEveryNSteps == 0)
-                Console.WriteLine($"  Epoch {epoch} step {step}/{batches.Length} loss={lossVal:F4}");
+            {
+                double avgBatchSeconds = totalBatchSeconds / step;
+                Console.WriteLine(
+                    $"  Epoch {epoch} step {step}/{batches.Length} " +
+                    $"loss={lossVal:F4} avg_batch_time={avgBatchSeconds:F4}s");
+            }
         }
 
         return (float)(epochLoss / Math.Max(step, 1));

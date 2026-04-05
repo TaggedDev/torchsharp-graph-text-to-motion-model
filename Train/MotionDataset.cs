@@ -1,6 +1,3 @@
-using System.Runtime.InteropServices;
-using System.Text;
-using TorchSharp;
 using static TorchSharp.torch;
 
 namespace Training;
@@ -21,17 +18,15 @@ public record MotionBatch(
 
 public sealed class MotionDataset
 {
-    private readonly List<(string motionPath, string clipPath)> _samples = [];
-    private readonly float[] _mean;
-    private readonly float[] _std;
+    private readonly List<(float[] motion, int frames, float[][] clips)> _samples = [];
     private readonly Random _rng = new(42);
 
     public int Count => _samples.Count;
 
     public MotionDataset(string splitDir, string processedRoot)
     {
-        _mean = ReadRawFloats(Path.Combine(processedRoot, "mean.bin"), 263);
-        _std = ReadRawFloats(Path.Combine(processedRoot, "std.bin"), 263);
+        var mean = ReadRawFloats(Path.Combine(processedRoot, "mean.bin"), 263);
+        var std = ReadRawFloats(Path.Combine(processedRoot, "std.bin"), 263);
 
         var binFiles = Directory.GetFiles(splitDir, "*.bin")
             .Where(f => !f.EndsWith(".clip.bin", StringComparison.OrdinalIgnoreCase))
@@ -41,9 +36,27 @@ public sealed class MotionDataset
         foreach (var binPath in binFiles)
         {
             var clipPath = Path.ChangeExtension(binPath, ".clip.bin");
-            if (File.Exists(clipPath))
-                _samples.Add((binPath, clipPath));
+            if (!File.Exists(clipPath))
+                continue;
+
+            var (data, frames, featDim) = ReadMotion(binPath);
+            var clips = ReadClip(clipPath);
+
+            // Normalize in-place during load
+            for (int t = 0; t < frames; t++)
+            {
+                int off = t * featDim;
+                for (int f = 0; f < featDim; f++)
+                {
+                    float s = std[f];
+                    data[off + f] = (data[off + f] - mean[f]) / (s < 1e-5f ? 1.0f : s);
+                }
+            }
+
+            _samples.Add((data, frames, clips));
         }
+
+        Console.WriteLine($"  Loaded {_samples.Count} samples from {splitDir}");
     }
 
     public int[][] GetEpochBatches(int batchSize, bool shuffle)
@@ -72,47 +85,37 @@ public sealed class MotionDataset
     public MotionBatch LoadBatch(int[] indices, Device device)
     {
         int B = indices.Length;
+        int featDim = Data.Skeleton.FeatureDim;
 
-        var motions = new (float[] data, int frames)[ B];
-        var clips = new float[B][];
-
+        int tMax = 0;
         for (int i = 0; i < B; i++)
         {
-            var (motionPath, clipPath) = _samples[indices[i]];
-            var (data, frames, _) = ReadMotion(motionPath);
-            motions[i] = (data, frames);
-
-            var embeddings = ReadClip(clipPath);
-            clips[i] = embeddings[_rng.Next(embeddings.Length)];
+            int frames = _samples[indices[i]].frames;
+            if (frames > tMax) tMax = frames;
         }
-
-        int tMax = motions.Max(m => m.frames);
-        int featDim = Data.Skeleton.FeatureDim;
 
         var motionBuf = new float[B * tMax * featDim];
         var maskBuf = new float[B * tMax];
+        var condBuf = new float[B * 512];
 
         for (int i = 0; i < B; i++)
         {
-            int frames = motions[i].frames;
-            var src = motions[i].data;
+            var (data, frames, clips) = _samples[indices[i]];
 
+            // Copy pre-normalized motion data
+            int srcLen = frames * featDim;
+            int dstOff = i * tMax * featDim;
+            Array.Copy(data, 0, motionBuf, dstOff, srcLen);
+
+            // Fill mask
+            int maskOff = i * tMax;
             for (int t = 0; t < frames; t++)
-            {
-                maskBuf[i * tMax + t] = 1.0f;
-                int srcOff = t * featDim;
-                int dstOff = (i * tMax + t) * featDim;
-                for (int f = 0; f < featDim; f++)
-                {
-                    float std = _std[f];
-                    motionBuf[dstOff + f] = (src[srcOff + f] - _mean[f]) / (std < 1e-5f ? 1.0f : std);
-                }
-            }
-        }
+                maskBuf[maskOff + t] = 1.0f;
 
-        var condBuf = new float[B * 512];
-        for (int i = 0; i < B; i++)
-            Array.Copy(clips[i], 0, condBuf, i * 512, 512);
+            // Pick a random CLIP embedding
+            var clip = clips[_rng.Next(clips.Length)];
+            Array.Copy(clip, 0, condBuf, i * 512, 512);
+        }
 
         var motionT = tensor(motionBuf, [B, tMax, featDim], dtype: float32).to(device);
         var maskT = tensor(maskBuf, [B, tMax], dtype: float32).to(device);
