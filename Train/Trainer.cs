@@ -19,6 +19,7 @@ public sealed class Trainer
     private readonly MotionDataset _testSet;
     private readonly GraphDenoiser _denoiser;
     private readonly DdpmScheduler _scheduler;
+    private readonly PositionLoss _positionLoss;
     private readonly optim.Optimizer _optimizer;
 
     public Trainer(IConfigurationRoot config)
@@ -46,6 +47,8 @@ public sealed class Trainer
 
         _scheduler = new DdpmScheduler(numTimesteps);
         _scheduler.To(_device);
+
+        _positionLoss = new PositionLoss(processedPath, _device);
 
         _denoiser = new GraphDenoiser(numGcnLayers, nodeHidden);
         _denoiser.to(_device);
@@ -109,7 +112,12 @@ public sealed class Trainer
 
             var xt = _scheduler.QSample(batch.Motion, t, noise);
             var predicted = _denoiser.forward(xt, t, batch.Condition);
-            var loss = _scheduler.Loss(predicted, noise, batch.Mask);
+            var predictedX0 = _scheduler.PredictX0(xt, t, predicted).clamp(-5, 5);
+            var (loss, _, _) = _positionLoss.Compute(predictedX0, batch.Motion, batch.Mask);
+
+            if (!IsFiniteScalar(loss))
+                throw new InvalidOperationException(
+                    $"Non-finite training loss at epoch {epoch}, step {step + 1}. Training diverged before optimizer step.");
 
             _optimizer.zero_grad();
             loss.backward();
@@ -169,7 +177,12 @@ public sealed class Trainer
                 var noise = randn_like(batch.Motion) * batch.Mask.unsqueeze(-1);
                 var xt = _scheduler.QSample(batch.Motion, t, noise);
                 var predicted = _denoiser.forward(xt, t, batch.Condition);
-                var loss = _scheduler.Loss(predicted, noise, batch.Mask);
+                var predictedX0 = _scheduler.PredictX0(xt, t, predicted).clamp(-5, 5);
+                var (loss, _, _) = _positionLoss.Compute(predictedX0, batch.Motion, batch.Mask);
+
+                if (!IsFiniteScalar(loss))
+                    throw new InvalidOperationException(
+                        $"Non-finite evaluation loss on dataset batch {count + 1}. The checkpoint is numerically unstable.");
 
                 lossSum.add_(loss);
                 count++;
@@ -203,5 +216,11 @@ public sealed class Trainer
         if (metrics.Count == 0)
             return "no metrics yet";
         return string.Join(", ", metrics.Select(kv => $"{kv.Key}={kv.Value:F4}"));
+    }
+
+    private static bool IsFiniteScalar(Tensor value)
+    {
+        var scalar = value.item<float>();
+        return !float.IsNaN(scalar) && !float.IsInfinity(scalar);
     }
 }

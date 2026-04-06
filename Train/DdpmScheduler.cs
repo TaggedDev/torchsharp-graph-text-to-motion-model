@@ -54,6 +54,16 @@ public sealed class DdpmScheduler
     }
 
     /// <summary>
+    /// Reconstruct x_0 from x_t and predicted noise.
+    /// </summary>
+    public Tensor PredictX0(Tensor xt, Tensor t, Tensor predictedNoise)
+    {
+        var sqrtA = _sqrtAlphasCumprod[t].to(float32).reshape(-1, 1, 1);
+        var sqrtOmA = _sqrtOneMinusAlphasCumprod[t].to(float32).reshape(-1, 1, 1);
+        return (xt - sqrtOmA * predictedNoise) / sqrtA;
+    }
+
+    /// <summary>
     /// Masked MSE loss: mean over real frames only.
     /// predicted/target: [B, T, 263], mask: [B, T] (1.0 for real frames).
     /// </summary>
@@ -107,7 +117,7 @@ public sealed class DdpmScheduler
             float sqrtAcpT = MathF.Sqrt(acpT);
             float sqrtOneMinusAcpT = MathF.Sqrt(1f - acpT);
 
-            var x0 = (xt - sqrtOneMinusAcpT * predNoise) / sqrtAcpT;
+            var x0 = ((xt - sqrtOneMinusAcpT * predNoise) / sqrtAcpT).clamp(-5, 5);
 
             float coefX0 = MathF.Sqrt(acpPrev) * betaT / (1f - acpT);
             float coefXt = MathF.Sqrt(alphaT) * (1f - acpPrev) / (1f - acpT);

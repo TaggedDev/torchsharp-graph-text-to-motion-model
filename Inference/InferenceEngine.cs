@@ -115,6 +115,14 @@ public sealed class InferenceEngine : IDisposable
             }
         }
 
+        if (!TryFindFirstNonFinite(data, out var badIndex, out var badValue))
+        {
+            int badFrame = badIndex / FeatureDim;
+            int badFeature = badIndex % FeatureDim;
+            throw new InvalidOperationException(
+                $"Generated motion contains a non-finite value ({badValue}) at frame {badFrame}, feature {badFeature}. The checkpoint output is numerically unstable.");
+        }
+
         // 4. Build output path: generations/{model}/{prompt_20}_{HH-mm-ss}.bin
         var sanitized = SanitizeForFilename(prompt, MaxFilenamePromptLen);
         var time = DateTime.Now.ToString("HH-mm-ss", CultureInfo.InvariantCulture);
@@ -150,6 +158,24 @@ public sealed class InferenceEngine : IDisposable
         var floats = new float[expectedCount];
         Buffer.BlockCopy(bytes, 0, floats, 0, expectedCount * sizeof(float));
         return floats;
+    }
+
+    private static bool TryFindFirstNonFinite(float[] data, out int index, out float value)
+    {
+        for (int i = 0; i < data.Length; i++)
+        {
+            var current = data[i];
+            if (float.IsNaN(current) || float.IsInfinity(current))
+            {
+                index = i;
+                value = current;
+                return false;
+            }
+        }
+
+        index = -1;
+        value = 0f;
+        return true;
     }
 
     private static string SanitizeForFilename(string s, int maxLen)

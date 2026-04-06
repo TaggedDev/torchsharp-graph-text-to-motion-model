@@ -215,6 +215,15 @@ IResult BuildAnimationResponse(string file)
     var (frameCount, featureDim, caption) = ReadBinHeader(file);
     var motionData = ReadBinFrames(file, frameCount, featureDim);
 
+    if (!TryFindFirstNonFinite(motionData, out var badIndex, out var badValue))
+    {
+        int badFrame = badIndex / featureDim;
+        int badFeature = badIndex % featureDim;
+        return Results.Problem(
+            detail: $"Animation file '{Path.GetFileName(file)}' contains a non-finite value ({badValue}) at frame {badFrame}, feature {badFeature}. Regenerate it with a stable checkpoint.",
+            statusCode: 422);
+    }
+
     // Extract joint positions: indices [4:67] = 21 joints x 3
     // Plus root height from index [3] for the pelvis (joint 0)
     var positions = new float[frameCount][];
@@ -276,6 +285,24 @@ static float[] ReadBinFrames(string path, int frameCount, int featureDim)
     var floats = new float[frameCount * featureDim];
     Buffer.BlockCopy(bytes, 0, floats, 0, byteCount);
     return floats;
+}
+
+static bool TryFindFirstNonFinite(float[] values, out int index, out float value)
+{
+    for (int i = 0; i < values.Length; i++)
+    {
+        var current = values[i];
+        if (float.IsNaN(current) || float.IsInfinity(current))
+        {
+            index = i;
+            value = current;
+            return false;
+        }
+    }
+
+    index = -1;
+    value = 0f;
+    return true;
 }
 
 record GenerateRequest(string Model, string Prompt, int Frames);

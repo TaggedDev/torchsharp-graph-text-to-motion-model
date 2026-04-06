@@ -6,7 +6,7 @@
   "NumTimesteps": "1000",
   "NodeHidden": "64",
   "NumGcnLayers": "4",
-  "GradClipNorm": "0",
+  "GradClipNorm": "1.0",
   "CheckpointDir": "checkpoints",
   "LogEveryNSteps": "50",
   "Device": "cuda"
