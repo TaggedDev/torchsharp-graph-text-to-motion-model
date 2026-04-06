@@ -26,10 +26,12 @@ public sealed class GraphDenoiser : Module<Tensor, Tensor, Tensor, Tensor>
     private readonly Linear _condProj;
     private readonly ModuleList<GraphConvLayer> _gcnLayers;
     private readonly ModuleList<LayerNorm> _norms;
+    private readonly ModuleList<TemporalConvBlock> _temporalLayers;
 
     public GraphDenoiser(
         int numGcnLayers = 4,
-        int nodeHidden = 64)
+        int nodeHidden = 64,
+        int temporalKernel = 3)
         : base("GraphDenoiser")
     {
         _numJoints = Data.Skeleton.NumJoints;
@@ -48,14 +50,17 @@ public sealed class GraphDenoiser : Module<Tensor, Tensor, Tensor, Tensor>
         // Condition projection: CLIP 512 → flatHidden
         _condProj = Linear(ClipDim, _flatHidden);
 
-        // GCN layers + layer norms
+        // GCN layers + layer norms + temporal conv blocks
         var adj = Data.Skeleton.BuildAdjacency();
         _gcnLayers = new ModuleList<GraphConvLayer>();
         _norms = new ModuleList<LayerNorm>();
+        _temporalLayers = new ModuleList<TemporalConvBlock>();
         for (int i = 0; i < numGcnLayers; i++)
         {
             _gcnLayers.Add(new GraphConvLayer($"gcn_{i}", nodeHidden, nodeHidden, adj));
             _norms.Add(LayerNorm(nodeHidden));
+            int dilation = 1 << i; // 1, 2, 4, 8
+            _temporalLayers.Add(new TemporalConvBlock($"temporal_{i}", nodeHidden, _numJoints, temporalKernel, dilation));
         }
 
         RegisterComponents();
@@ -86,16 +91,22 @@ public sealed class GraphDenoiser : Module<Tensor, Tensor, Tensor, Tensor>
         var combined = (tEmb + cEmb).unsqueeze(1);                     // [B, 1, flatHidden]
         h = h + combined;                                              // [B, T, flatHidden]
 
-        // Reshape to per-node: [B*T, numJoints, nodeHidden]
-        h = h.reshape(B * T, _numJoints, _nodeHidden);
+        // Work in 4D: [B, T, numJoints, nodeHidden]
+        h = h.reshape(B, T, _numJoints, _nodeHidden);
 
-        // GCN blocks with residual + layer norm
-        foreach (var (gcn, norm) in _gcnLayers.Zip(_norms))
+        // Alternating spatial GCN + temporal conv blocks
+        for (int i = 0; i < _gcnLayers.Count; i++)
         {
-            var residual = h;
-            h = gcn.forward(h);
-            h = norm.forward(h);
-            h = h + residual;
+            // --- Spatial: GCN over joints (per-frame) ---
+            var hFlat = h.reshape(B * T, _numJoints, _nodeHidden);
+            var residual = hFlat;
+            hFlat = _gcnLayers[i].forward(hFlat);
+            hFlat = _norms[i].forward(hFlat);
+            hFlat = hFlat + residual;
+            h = hFlat.reshape(B, T, _numJoints, _nodeHidden);
+
+            // --- Temporal: conv along T (per-joint) ---
+            h = _temporalLayers[i].forward(h);
         }
 
         // Project back to feature space

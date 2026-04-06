@@ -113,7 +113,7 @@ public sealed class Trainer
             var xt = _scheduler.QSample(batch.Motion, t, noise);
             var predicted = _denoiser.forward(xt, t, batch.Condition);
             var predictedX0 = _scheduler.PredictX0(xt, t, predicted).clamp(-5, 5);
-            var (loss, _, _) = _positionLoss.Compute(predictedX0, batch.Motion, batch.Mask);
+            var (loss, _, _, _) = _positionLoss.Compute(predictedX0, batch.Motion, batch.Mask);
 
             if (!IsFiniteScalar(loss))
                 throw new InvalidOperationException(
@@ -178,7 +178,7 @@ public sealed class Trainer
                 var xt = _scheduler.QSample(batch.Motion, t, noise);
                 var predicted = _denoiser.forward(xt, t, batch.Condition);
                 var predictedX0 = _scheduler.PredictX0(xt, t, predicted).clamp(-5, 5);
-                var (loss, _, _) = _positionLoss.Compute(predictedX0, batch.Motion, batch.Mask);
+                var (loss, _, _, _) = _positionLoss.Compute(predictedX0, batch.Motion, batch.Mask);
 
                 if (!IsFiniteScalar(loss))
                     throw new InvalidOperationException(
