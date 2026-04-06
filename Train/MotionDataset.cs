@@ -82,16 +82,30 @@ public sealed class MotionDataset
         return batches.ToArray();
     }
 
-    public MotionBatch LoadBatch(int[] indices, Device device, float condDropoutProb = 0f)
+    public MotionBatch LoadBatch(int[] indices, Device device, float condDropoutProb = 0f, int maxSequenceLength = 0)
     {
         int B = indices.Length;
         int featDim = Data.Skeleton.FeatureDim;
 
+        // Per-sample effective frame count after optional random crop to
+        // maxSequenceLength. Crop offsets are picked once here so we can
+        // both size the batch tensor and copy the right window.
+        var effFrames = new int[B];
+        var cropOffsets = new int[B];
         int tMax = 0;
         for (int i = 0; i < B; i++)
         {
             int frames = _samples[indices[i]].frames;
-            if (frames > tMax) tMax = frames;
+            int eff = frames;
+            int offset = 0;
+            if (maxSequenceLength > 0 && frames > maxSequenceLength)
+            {
+                eff = maxSequenceLength;
+                offset = _rng.Next(frames - maxSequenceLength + 1);
+            }
+            effFrames[i] = eff;
+            cropOffsets[i] = offset;
+            if (eff > tMax) tMax = eff;
         }
 
         var motionBuf = new float[B * tMax * featDim];
@@ -100,16 +114,19 @@ public sealed class MotionDataset
 
         for (int i = 0; i < B; i++)
         {
-            var (data, frames, clips) = _samples[indices[i]];
+            var (data, _, clips) = _samples[indices[i]];
+            int eff = effFrames[i];
+            int srcFrameOff = cropOffsets[i];
 
-            // Copy pre-normalized motion data
-            int srcLen = frames * featDim;
+            // Copy pre-normalized motion data (cropped window)
+            int srcLen = eff * featDim;
+            int srcByteOff = srcFrameOff * featDim;
             int dstOff = i * tMax * featDim;
-            Array.Copy(data, 0, motionBuf, dstOff, srcLen);
+            Array.Copy(data, srcByteOff, motionBuf, dstOff, srcLen);
 
             // Fill mask
             int maskOff = i * tMax;
-            for (int t = 0; t < frames; t++)
+            for (int t = 0; t < eff; t++)
                 maskBuf[maskOff + t] = 1.0f;
 
             // Classifier-free guidance: with probability condDropoutProb drop

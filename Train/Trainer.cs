@@ -15,6 +15,7 @@ public sealed class Trainer
     private readonly string _checkpointDir;
     private readonly string _checkpointFilePrefix;
     private readonly float _condDropoutProb;
+    private readonly int _maxSequenceLength;
 
     private readonly MotionDataset _trainSet;
     private readonly MotionDataset _valSet;
@@ -38,6 +39,7 @@ public sealed class Trainer
         _checkpointDir = Path.Combine(checkpointRoot, checkpointSubdir);
         _checkpointFilePrefix = string.IsNullOrEmpty(checkpointSubdir) ? "model" : $"model_{checkpointSubdir}";
         _condDropoutProb = float.Parse(config["CondDropoutProb"] ?? "0.1", CultureInfo.InvariantCulture);
+        _maxSequenceLength = int.Parse(config["MaxSequenceLength"] ?? "196");
 
         var deviceName = config["Device"] ?? "cuda";
 
@@ -109,7 +111,7 @@ public sealed class Trainer
             var sw = System.Diagnostics.Stopwatch.StartNew();
 
             using var scope = NewDisposeScope();
-            using var batch = _trainSet.LoadBatch(indices, _device, _condDropoutProb);
+            using var batch = _trainSet.LoadBatch(indices, _device, _condDropoutProb, _maxSequenceLength);
 
             int b = (int)batch.Motion.shape[0];
             var t = _scheduler.SampleTimesteps(b, _device);
@@ -172,7 +174,7 @@ public sealed class Trainer
             foreach (var indices in batches)
             {
                 using var scope = NewDisposeScope();
-                using var batch = dataset.LoadBatch(indices, _device);
+                using var batch = dataset.LoadBatch(indices, _device, 0f, _maxSequenceLength);
 
                 int b = (int)batch.Motion.shape[0];
                 var t = _scheduler.SampleTimesteps(b, _device);

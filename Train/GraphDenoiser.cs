@@ -15,7 +15,7 @@ public sealed class GraphDenoiser : Module<Tensor, Tensor, Tensor, Tensor>
 {
     private const int ClipDim = 512;
     private const int TimeEmbDim = 256;
-    private const int MaxFrames = 300;
+    private const int MaxFrames = 512;
 
     private readonly int _numJoints;
     private readonly int _nodeHidden;
