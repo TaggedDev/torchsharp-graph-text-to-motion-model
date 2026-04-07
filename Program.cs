@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Configuration;
 
 internal class Program
 {
@@ -8,10 +8,12 @@ internal class Program
         if (!ValidateMode(mode))
             return;
 
+        var optionOverrides = ParseModeOptions(mode, args.Skip(1).ToArray());
         string configFileName = mode == "clip-embedding" ? "preprocessing.json" : $"{mode}.json";
         var config = new ConfigurationBuilder()
             .SetBasePath(AppContext.BaseDirectory)
             .AddJsonFile($"Configs/{configFileName}", optional: false, reloadOnChange: true)
+            .AddInMemoryCollection(optionOverrides)
             .Build();
 
         Console.WriteLine($"Running mode={mode}");
@@ -36,5 +38,31 @@ internal class Program
             _ => throw new ArgumentException(
                 $"Mode is invalid: {s}. Valid values are 'preprocessing', 'training', 'inference'.")
         };
+    }
+
+    private static Dictionary<string, string?> ParseModeOptions(string mode, string[] args)
+    {
+        var overrides = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+        if (args.Length == 0)
+            return overrides;
+
+        if (mode != "training")
+            throw new ArgumentException($"Mode '{mode}' does not accept additional arguments.");
+
+        for (int i = 0; i < args.Length; i++)
+        {
+            switch (args[i])
+            {
+                case "--resume":
+                    if (i + 1 >= args.Length)
+                        throw new ArgumentException("--resume requires a checkpoint path.");
+                    overrides["ResumeCheckpoint"] = args[++i];
+                    break;
+                default:
+                    throw new ArgumentException($"Unknown training argument: {args[i]}");
+            }
+        }
+
+        return overrides;
     }
 }

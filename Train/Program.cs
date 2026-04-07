@@ -10,6 +10,8 @@ public static class Train
 
         Console.WriteLine($"CUDA available: {torch.cuda.is_available()}");
         Console.WriteLine($"Device count: {torch.cuda.device_count()}");
+        if (!string.IsNullOrWhiteSpace(config["ResumeCheckpoint"]))
+            Console.WriteLine($"Resume checkpoint: {config["ResumeCheckpoint"]}");
 
         var trainer = new Training.Trainer(config);
         trainer.Run();

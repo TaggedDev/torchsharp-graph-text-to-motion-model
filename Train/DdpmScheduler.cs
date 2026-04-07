@@ -87,7 +87,8 @@ public sealed class DdpmScheduler
         int frames,
         int featureDim,
         Device device,
-        long? seed = null)
+        long? seed = null,
+        float guidanceScale = 1.0f)
     {
         model.eval();
 
@@ -105,7 +106,19 @@ public sealed class DdpmScheduler
             using var stepScope = NewDisposeScope();
 
             var tTensor = full(new long[] { B }, tInt, dtype: int64, device: device);
-            var predNoise = model.forward(xt, tTensor, cond);
+
+            Tensor predNoise;
+            if (guidanceScale > 1.0f)
+            {
+                var nullCond = model.NullCondition.expand(B, -1);
+                var condPred = model.forward(xt, tTensor, cond);
+                var uncondPred = model.forward(xt, tTensor, nullCond);
+                predNoise = uncondPred + guidanceScale * (condPred - uncondPred);
+            }
+            else
+            {
+                predNoise = model.forward(xt, tTensor, cond);
+            }
 
             float alphaT = _alphas[tInt].to(float32).item<float>();
             float acpT = _alphasCumprod[tInt].to(float32).item<float>();

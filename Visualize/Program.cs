@@ -174,7 +174,8 @@ app.MapPost("/api/generate", async (GenerateRequest req) =>
         string binPath;
         try
         {
-            binPath = engine.Generate(req.Prompt, frames, generationsPath);
+            float guidance = req.GuidanceScale > 0 ? req.GuidanceScale : 3.5f;
+            binPath = engine.Generate(req.Prompt, frames, generationsPath, guidanceScale: guidance);
         }
         catch (Exception ex)
         {
@@ -305,4 +306,4 @@ static bool TryFindFirstNonFinite(float[] values, out int index, out float value
     return true;
 }
 
-record GenerateRequest(string Model, string Prompt, int Frames);
+record GenerateRequest(string Model, string Prompt, int Frames, float GuidanceScale = 3.5f);

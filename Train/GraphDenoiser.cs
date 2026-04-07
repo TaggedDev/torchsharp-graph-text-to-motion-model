@@ -26,12 +26,16 @@ public sealed class GraphDenoiser : Module<Tensor, Tensor, Tensor, Tensor>
     private readonly Linear _condProj;
     private readonly ModuleList<GraphConvLayer> _gcnLayers;
     private readonly ModuleList<LayerNorm> _norms;
-    private readonly ModuleList<TemporalConvBlock> _temporalLayers;
+    private readonly ModuleList<TemporalTransformerBlock> _temporalLayers;
+    private readonly Parameter _nullCond;
+
+    /// <summary>Learnable null conditioning embedding for classifier-free guidance.</summary>
+    public Tensor NullCondition => _nullCond;
 
     public GraphDenoiser(
         int numGcnLayers = 4,
         int nodeHidden = 64,
-        int temporalKernel = 3)
+        int numHeads = 4)
         : base("GraphDenoiser")
     {
         _numJoints = Data.Skeleton.NumJoints;
@@ -50,17 +54,19 @@ public sealed class GraphDenoiser : Module<Tensor, Tensor, Tensor, Tensor>
         // Condition projection: CLIP 512 → flatHidden
         _condProj = Linear(ClipDim, _flatHidden);
 
-        // GCN layers + layer norms + temporal conv blocks
+        // Learnable null condition for classifier-free guidance
+        _nullCond = Parameter(zeros(1, ClipDim, dtype: float32));
+
+        // GCN layers + layer norms + temporal transformer blocks
         var adj = Data.Skeleton.BuildAdjacency();
         _gcnLayers = new ModuleList<GraphConvLayer>();
         _norms = new ModuleList<LayerNorm>();
-        _temporalLayers = new ModuleList<TemporalConvBlock>();
+        _temporalLayers = new ModuleList<TemporalTransformerBlock>();
         for (int i = 0; i < numGcnLayers; i++)
         {
             _gcnLayers.Add(new GraphConvLayer($"gcn_{i}", nodeHidden, nodeHidden, adj));
             _norms.Add(LayerNorm(nodeHidden));
-            int dilation = 1 << i; // 1, 2, 4, 8
-            _temporalLayers.Add(new TemporalConvBlock($"temporal_{i}", nodeHidden, _numJoints, temporalKernel, dilation));
+            _temporalLayers.Add(new TemporalTransformerBlock($"temporal_{i}", nodeHidden, _numJoints, numHeads));
         }
 
         RegisterComponents();

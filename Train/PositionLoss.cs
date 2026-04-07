@@ -37,8 +37,9 @@ public sealed class PositionLoss : IDisposable
         _parentIndex = tensor(parentIndex, dtype: int64, device: _device);
     }
 
-     public (Tensor total, Tensor pos, Tensor aux, Tensor smooth) Compute(
-        Tensor predictedX0, Tensor targetX0, Tensor mask, float smoothWeight = 0.5f)
+     public (Tensor total, Tensor pos, Tensor aux, Tensor smooth, Tensor vel) Compute(
+        Tensor predictedX0, Tensor targetX0, Tensor mask,
+        float smoothWeight = 3.0f, float velocityWeight = 1.0f)
     {
         var predPos = ExtractJointPositions(predictedX0);
         var targetPos = ExtractJointPositions(targetX0);
@@ -55,14 +56,21 @@ public sealed class PositionLoss : IDisposable
         var l1PerBone = (predChildren - predParents).abs().sum(dim: -1);
         var auxLoss = (l1PerBone * validFrames).sum() / validBoneCount;
 
+        // Velocity loss (1st-order finite difference)
+        var predVel = predPos[.., 1.., .., ..] - predPos[.., ..^1, .., ..];       // [B, T-1, 22, 3]
+        var targetVel = targetPos[.., 1.., .., ..] - targetPos[.., ..^1, .., ..]; // [B, T-1, 22, 3]
+        var velMask = mask[.., ..^1] * mask[.., 1..];                              // [B, T-1]
+        var velCount = velMask.sum().clamp_min(1.0f) * Data.Skeleton.NumJoints;
+        var velLoss = ((predVel - targetVel).pow(2).sum(dim: -1) * velMask.unsqueeze(-1)).sum() / velCount;
+
         // Acceleration smoothness loss (2nd-order finite difference)
-        var velocity = predPos[.., 1.., .., ..] - predPos[.., ..^1, .., ..]; // [B, T-1, 22, 3]
-        var accel = velocity[.., 1.., .., ..] - velocity[.., ..^1, .., ..];  // [B, T-2, 22, 3]
-        var accelMask = mask[.., ..^2] * mask[.., 1..^1] * mask[.., 2..];    // [B, T-2]
+        var accel = predVel[.., 1.., .., ..] - predVel[.., ..^1, .., ..];         // [B, T-2, 22, 3]
+        var accelMask = mask[.., ..^2] * mask[.., 1..^1] * mask[.., 2..];         // [B, T-2]
         var accelCount = accelMask.sum().clamp_min(1.0f) * Data.Skeleton.NumJoints;
         var smoothLoss = (accel.pow(2).sum(dim: -1) * accelMask.unsqueeze(-1)).sum() / accelCount;
 
-        return (posLoss + auxLoss + smoothWeight * smoothLoss, posLoss, auxLoss, smoothLoss);
+        var total = posLoss + auxLoss + smoothWeight * smoothLoss + velocityWeight * velLoss;
+        return (total, posLoss, auxLoss, smoothLoss, velLoss);
     }
 
     private Tensor ExtractJointPositions(Tensor flat)

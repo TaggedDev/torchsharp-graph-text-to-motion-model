@@ -43,6 +43,7 @@ public sealed class InferenceEngine : IDisposable
         int numTimesteps = int.Parse(trainingCfg["NumTimesteps"] ?? "1000");
         int nodeHidden = int.Parse(trainingCfg["NodeHidden"] ?? "64");
         int numGcnLayers = int.Parse(trainingCfg["NumGcnLayers"] ?? "4");
+        int numHeads = int.Parse(trainingCfg["NumHeads"] ?? "4");
         var requestedDevice = trainingCfg["Device"] ?? "cuda";
 
         _device = (requestedDevice == "cuda" && cuda.is_available())
@@ -50,7 +51,7 @@ public sealed class InferenceEngine : IDisposable
             : CPU;
         Console.WriteLine($"InferenceEngine: device={_device.type}");
 
-        _denoiser = new GraphDenoiser(numGcnLayers, nodeHidden);
+        _denoiser = new GraphDenoiser(numGcnLayers, nodeHidden, numHeads);
         _denoiser.load(checkpointPath);
         _denoiser.to(_device);
         _denoiser.MoveGcnBuffers(_device);
@@ -84,7 +85,8 @@ public sealed class InferenceEngine : IDisposable
         string prompt,
         int frames,
         string outputRoot,
-        long? seed = null)
+        long? seed = null,
+        float guidanceScale = 1.0f)
     {
         if (string.IsNullOrWhiteSpace(prompt))
             throw new ArgumentException("Prompt must be non-empty", nameof(prompt));
@@ -99,7 +101,7 @@ public sealed class InferenceEngine : IDisposable
         using var cond = tensor(condVec, new long[] { 1, ClipEmbeddingDim }, dtype: float32).to(_device);
 
         // 2. Reverse-sample in normalized feature space
-        var generated = _scheduler.Sample(_denoiser, cond, frames, FeatureDim, _device, seed);
+        var generated = _scheduler.Sample(_denoiser, cond, frames, FeatureDim, _device, seed, guidanceScale);
 
         // 3. Move to CPU and denormalize
         using var cpu = generated.to(CPU).contiguous();
