@@ -12,3 +12,4 @@ models/
 /generations/
 /artifacts/
 /.codex_tmp/
+/Weights/

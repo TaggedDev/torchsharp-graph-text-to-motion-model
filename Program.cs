@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Text2Motion.ClipModel;
 using Text2Motion.DataPreprocessing;
 using Text2Motion.TorchTrainer;
 
@@ -8,6 +9,7 @@ using IHost host = Host.CreateDefaultBuilder(args)
     .ConfigureAppConfiguration((_, config) =>
     {
         config.AddJsonFile("model-settings.json", optional: false, reloadOnChange: true);
+        config.AddJsonFile("preprocessing-config.json", optional: false, reloadOnChange: true);
         config.AddEnvironmentVariables(prefix: "AI_");
     })
     .ConfigureServices((context, services) =>
@@ -16,10 +18,12 @@ using IHost host = Host.CreateDefaultBuilder(args)
 
         services.AddSingleton(configuration);
         services.AddSingleton<TrainingPipeline>();
+        services.AddSingleton<ClipModelOnnxInference>();
         services.AddSingleton<DataPreprocessor>();
         services.AddSingleton<TextToMotionModelTrainer>();
         services.Configure<ModelSettings>(
             configuration.GetSection("Model"));
+        services.Configure<PreprocessingConfig>(configuration);
     })
     .Build();
 
