@@ -1,6 +1,0 @@
-{
-  "DatasetPath": "D:/Code/CSharp/text-to-motion/dataset",
-  "OutputPath": "D:/Code/CSharp/text-to-motion/processed",
-  "ClipModelPath": "D:/Code/CSharp/text-to-motion/models/clip/clip_text_encoder.onnx",
-  "ClipVocabPath": "D:/Code/CSharp/text-to-motion/models/clip/bpe_simple_vocab_16e6.txt.gz"
-}
