@@ -3,7 +3,7 @@
     <PropertyGroup>
         <OutputType>Exe</OutputType>
         <TargetFramework>net8.0</TargetFramework>
-        <RootNamespace>text_to_motion</RootNamespace>
+        <RootNamespace>Text2Motion</RootNamespace>
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
         <DefaultItemExcludes>$(DefaultItemExcludes);Preprocess\**;Train\**;Inference\**;Data\**;Visualize\**</DefaultItemExcludes>
@@ -12,6 +12,7 @@
     <ItemGroup>
       <PackageReference Include="Microsoft.Extensions.Configuration" Version="10.0.5" />
       <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="10.0.5" />
+      <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.5" />
       <PackageReference Include="Microsoft.ML" Version="6.0.0-preview.26160.2" />
       <PackageReference Include="NumSharp" Version="0.41.0-prerelease" />
       <PackageReference Include="TorchSharp-cuda-windows" Version="0.106.0" />
@@ -25,6 +26,12 @@
 
     <ItemGroup>
       <Folder Include="models\clip\" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <None Update="model-settings.json">
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      </None>
     </ItemGroup>
 
 </Project>
