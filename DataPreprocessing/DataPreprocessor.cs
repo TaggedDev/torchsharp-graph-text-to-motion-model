@@ -1,7 +1,10 @@
-﻿using System.Security.Cryptography;
-using System.Text;
+﻿using System;
+using System.IO;
 using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.Extensions.Options;
+using ShellProgressBar;
 using Text2Motion.ClipModel;
 
 namespace Text2Motion.DataPreprocessing;
@@ -16,33 +19,50 @@ public class DataPreprocessor(ClipModelOnnxInference clipModel, IOptions<Preproc
         if (await CheckPreprocessingsExistAsync(token))
             return;
 
-        string[] annotations = Directory.GetFiles(_config.AnnotationPath, "*.txt");
-        foreach (var annotationFile in annotations)
+        var files = Directory.GetFiles(_config.AnnotationPath, "*.txt");
+        int total = files.Length;
+
+        var options = new ProgressBarOptions
         {
-            string text = await GetFirstAnnotationAsync(annotationFile, token);
+            ForegroundColor = ConsoleColor.Cyan,
+            BackgroundColor = ConsoleColor.DarkGray,
+            ProgressCharacter = '─',
+            DisplayTimeInRealTime = false,
+        };
+
+        using var progressBar = new ProgressBar(total, "Preprocessing embeddings", options);
+
+        for (int i = 0; i < total; i++)
+        {
+            token.ThrowIfCancellationRequested();
+            string file = files[i];
+            string name = Path.GetFileNameWithoutExtension(file);
+
+            progressBar.Tick($"[{i + 1}/{total} ({(i + 1) * 100 / total}%)] {name}");
+
+            string text = await GetFirstAnnotationAsync(file, token);
             float[] embedding = _clipModel.GetTextEmbedding(text);
-            await SaveEmbeddingFileAsync(embedding, text, token, annotationFile);
+            await SaveEmbeddingFileAsync(embedding, name, token);
         }
     }
 
-    private async Task<bool> CheckPreprocessingsExistAsync(CancellationToken token)
+    private Task<bool> CheckPreprocessingsExistAsync(CancellationToken token)
     {
-        if (!Directory.Exists(_config.EmbeddingsPath))
-            return false;
-
-        var files = await Task.Run(() => Directory.GetFiles(_config.EmbeddingsPath, "*.txt"), token);
-        return files.Length > 0;
+        bool exists = Directory.Exists(_config.EmbeddingsPath)
+            && Directory.GetFiles(_config.EmbeddingsPath, "*.bin").Length > 0;
+        return Task.FromResult(exists);
     }
 
-    private async Task SaveEmbeddingFileAsync(float[] embedding, string text, CancellationToken token, string fileName)
+    private async Task SaveEmbeddingFileAsync(float[] embedding, string sourceFilePath, CancellationToken token)
     {
         Directory.CreateDirectory(_config.EmbeddingsPath);
 
-        string outputPath = Path.Combine(_config.EmbeddingsPath, $"{fileName}.txt");
+        string name = Path.GetFileNameWithoutExtension(sourceFilePath);
+        string outputPath = Path.Combine(_config.EmbeddingsPath, $"{name}.bin");
 
-        var embeddingData = new { embedding, text };
-        string json = JsonSerializer.Serialize(embeddingData);
-        await File.WriteAllTextAsync(outputPath, json, token);
+        byte[] bytes = new byte[embedding.Length * sizeof(float)];
+        Buffer.BlockCopy(embedding, 0, bytes, 0, bytes.Length);
+        await File.WriteAllBytesAsync(outputPath, bytes, token);
     }
 
     private async Task<string> GetFirstAnnotationAsync(string fileName, CancellationToken token)
@@ -55,12 +75,5 @@ public class DataPreprocessor(ClipModelOnnxInference clipModel, IOptions<Preproc
         string firstLine = lines[0];
         int hashIndex = firstLine.IndexOf('#');
         return hashIndex >= 0 ? firstLine[..hashIndex].Trim() : firstLine.Trim();
-    }
-
-    private string ComputeHash(string text)
-    {
-        using var sha256 = SHA256.Create();
-        byte[] hashBytes = sha256.ComputeHash(Encoding.UTF8.GetBytes(text));
-        return Convert.ToHexString(hashBytes).ToLowerInvariant();
     }
 }

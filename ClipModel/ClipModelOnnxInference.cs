@@ -14,7 +14,10 @@ public class ClipModelOnnxInference
 
     public ClipModelOnnxInference()
     {
-        string weightsDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Weights", "Clip");
+        // Navigate from bin/Debug/net8.0 up to project root, then to Weights/Clip
+        string baseDir = AppDomain.CurrentDomain.BaseDirectory;
+        string projectRoot = Path.GetFullPath(Path.Combine(baseDir, "..", "..", ".."));
+        string weightsDir = Path.Combine(projectRoot, "Weights", "Clip");
         Directory.CreateDirectory(weightsDir);
 
         string modelPath = Path.Combine(weightsDir, ModelFileName);
