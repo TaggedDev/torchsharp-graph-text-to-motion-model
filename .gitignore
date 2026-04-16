@@ -10,3 +10,6 @@ processed/
 models/
 /checkpoints/
 /generations/
+/artifacts/
+/.codex_tmp/
+/Weights/

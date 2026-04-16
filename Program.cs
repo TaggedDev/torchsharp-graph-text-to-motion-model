@@ -1,40 +1,47 @@
-﻿using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Text2Motion.ClipModel;
+using Text2Motion.DataPreprocessing;
+using Text2Motion.TorchTrainer;
 
-internal class Program
+using IHost host = Host.CreateDefaultBuilder(args)
+    .ConfigureAppConfiguration((_, config) =>
+    {
+        config.AddJsonFile("model-settings.json", optional: false, reloadOnChange: true);
+        config.AddJsonFile("preprocessing-config.json", optional: false, reloadOnChange: true);
+        config.AddEnvironmentVariables(prefix: "AI_");
+    })
+    .ConfigureServices((context, services) =>
+    {
+        var configuration = context.Configuration;
+
+        services.AddSingleton(configuration);
+        services.AddSingleton<TrainingPipeline>();
+        services.AddSingleton<ClipModelOnnxInference>();
+        services.AddSingleton<DataPreprocessor>();
+        services.AddSingleton<TextToMotionModelTrainer>();
+        services.Configure<ModelSettings>(
+            configuration.GetSection("Model"));
+        services.Configure<PreprocessingConfig>(configuration);
+    })
+    .Build();
+
+var lifetime = host.Services.GetRequiredService<IHostApplicationLifetime>();
+var token = lifetime.ApplicationStopping;
+
+try
 {
-    private static void Main(string[] args)
-    {
-        string mode = args.Length > 0 ? args[0] : string.Empty;
-        if (!ValidateMode(mode))
-            return;
-
-        string configFileName = mode == "clip-embedding" ? "preprocessing.json" : $"{mode}.json";
-        var config = new ConfigurationBuilder()
-            .SetBasePath(AppContext.BaseDirectory)
-            .AddJsonFile($"Configs/{configFileName}", optional: false, reloadOnChange: true)
-            .Build();
-
-        Console.WriteLine($"Running mode={mode}");
-
-        switch (mode)
-        {
-            case "preprocessing": Preprocess.Run(config); break;
-            case "clip-embedding": Preprocess.RunClipOnly(config); break;
-            case "training": Train.Run(config); break;
-            case "inference": Inference.Run(config); break;
-            default: throw new ArgumentException("Mode is invalid but should have been caught before.");
-        }
-    }
-
-    private static bool ValidateMode(string s)
-    {
-        if (string.IsNullOrEmpty(s))
-            throw new ArgumentException("Mode is required");
-        return s switch
-        {
-            "preprocessing" or "clip-embedding" or "training" or "inference" => true,
-            _ => throw new ArgumentException(
-                $"Mode is invalid: {s}. Valid values are 'preprocessing', 'training', 'inference'.")
-        };
-    }
+    using var scope = host.Services.CreateScope();
+    var provider = scope.ServiceProvider;
+    var trainingPipeline = provider.GetRequiredService<TrainingPipeline>();
+    await trainingPipeline.ExecuteAsync(token);
+}
+catch (OperationCanceledException)
+{
+    Console.WriteLine("Graceful shutdown (cancellation requested).");
+}
+catch (Exception ex)
+{
+    Console.WriteLine($"Fatal error: {ex}");
 }
