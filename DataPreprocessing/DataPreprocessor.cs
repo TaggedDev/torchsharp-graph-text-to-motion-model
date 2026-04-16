@@ -1,9 +1,4 @@
-﻿using System;
-using System.IO;
-using System.Text.Json;
-using System.Threading;
-using System.Threading.Tasks;
-using Microsoft.Extensions.Options;
+﻿using Microsoft.Extensions.Options;
 using ShellProgressBar;
 using Text2Motion.ClipModel;
 
@@ -11,7 +6,6 @@ namespace Text2Motion.DataPreprocessing;
 
 public class DataPreprocessor(ClipModelOnnxInference clipModel, IOptions<PreprocessingConfig> options)
 {
-    private readonly ClipModelOnnxInference _clipModel = clipModel;
     private readonly PreprocessingConfig _config = options.Value;
 
     public async Task RunAsync(CancellationToken token)
@@ -41,7 +35,7 @@ public class DataPreprocessor(ClipModelOnnxInference clipModel, IOptions<Preproc
             progressBar.Tick($"[{i + 1}/{total} ({(i + 1) * 100 / total}%)] {name}");
 
             string text = await GetFirstAnnotationAsync(file, token);
-            float[] embedding = _clipModel.GetTextEmbedding(text);
+            float[] embedding = clipModel.GetTextEmbedding(text);
             await SaveEmbeddingFileAsync(embedding, name, token);
         }
     }
