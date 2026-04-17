@@ -33,6 +33,9 @@
       <None Update="model-settings.json">
         <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       </None>
+      <None Update="training-settings.json">
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      </None>
       <None Update="preprocessing-config.json">
         <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       </None>

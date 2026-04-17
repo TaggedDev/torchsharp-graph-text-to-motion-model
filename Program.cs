@@ -9,6 +9,7 @@ using IHost host = Host.CreateDefaultBuilder(args)
     .ConfigureAppConfiguration((_, config) =>
     {
         config.AddJsonFile("model-settings.json", optional: false, reloadOnChange: true);
+        config.AddJsonFile("training-settings.json", optional: false, reloadOnChange: true);
         config.AddJsonFile("preprocessing-config.json", optional: false, reloadOnChange: true);
         config.AddEnvironmentVariables(prefix: "AI_");
     })
@@ -23,6 +24,8 @@ using IHost host = Host.CreateDefaultBuilder(args)
         services.AddSingleton<TextToMotionModelTrainer>();
         services.Configure<ModelSettings>(
             configuration.GetSection("Model"));
+        services.Configure<TrainingSettings>(
+            configuration.GetSection("Training"));
         services.Configure<PreprocessingConfig>(configuration);
     })
     .Build();
