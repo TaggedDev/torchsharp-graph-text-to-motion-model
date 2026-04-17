@@ -1,5 +1,7 @@
 {
   "Training": {
-    "OutputRootPath": "D:\\Code\\CSharp\\text-to-motion\\Weights\\Text2Motion"
+    "OutputRootPath": "D:\\Code\\CSharp\\text-to-motion\\Weights\\Text2Motion",
+    "LoadCheckpoint": false,
+    "LoadRunNumber": 0
   }
 }
