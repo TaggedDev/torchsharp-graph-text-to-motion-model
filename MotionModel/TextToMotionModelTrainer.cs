@@ -25,13 +25,15 @@ public class TextToMotionModelTrainer(IOptions<ModelSettings> modelOptions, IOpt
         SetRandomSeed(_modelSettings.RandomSeed);
 
         string outputRootPath = ResolveOutputRootPath(_trainingSettings);
-        string checkpointsPath = Path.Combine(outputRootPath, "checkpoints");
-        string resultsPath = Path.Combine(outputRootPath, "results");
+        string runDirectoryPath = CreateRunDirectory(outputRootPath);
+        string checkpointsPath = Path.Combine(runDirectoryPath, "checkpoints");
+        string resultsPath = Path.Combine(runDirectoryPath, "results");
         string metricsPath = Path.Combine(resultsPath, "metrics.json");
-        string modelSettingsSnapshotPath = Path.Combine(outputRootPath, "model-settings.snapshot.json");
-        string trainingSettingsSnapshotPath = Path.Combine(outputRootPath, "training-settings.snapshot.json");
+        string testMetricsPath = Path.Combine(resultsPath, "test-metrics.json");
+        string modelSettingsSnapshotPath = Path.Combine(runDirectoryPath, "model-settings.snapshot.json");
+        string trainingSettingsSnapshotPath = Path.Combine(runDirectoryPath, "training-settings.snapshot.json");
 
-        Directory.CreateDirectory(outputRootPath);
+        Directory.CreateDirectory(runDirectoryPath);
         Directory.CreateDirectory(checkpointsPath);
         Directory.CreateDirectory(resultsPath);
 
@@ -40,7 +42,7 @@ public class TextToMotionModelTrainer(IOptions<ModelSettings> modelOptions, IOpt
 
         var metricsLog = new TrainerMetricsLog();
         var trainingState = new TrainingState();
-        var model = CreateModel();
+        var model = new StubTextToMotionModel();
         var optimizer = torch.optim.Adam(
             model.parameters(),
             lr: _modelSettings.LearningRate,
@@ -89,7 +91,7 @@ public class TextToMotionModelTrainer(IOptions<ModelSettings> modelOptions, IOpt
             metricsLog.EpochSeconds.Add((float)epochTimer.Elapsed.TotalSeconds);
 
             File.WriteAllText(metricsPath, JsonSerializer.Serialize(metricsLog, JsonOptions));
-            SaveEpochArtifacts(checkpointsPath, resultsPath, model, trainingState, epochSummary);
+            SaveEpochWeights(checkpointsPath, model, epochSummary.Epoch);
 
             if (epoch % printEveryEpoch == 0 || epoch == 1 || epoch == maxEpochs)
             {
@@ -109,21 +111,15 @@ public class TextToMotionModelTrainer(IOptions<ModelSettings> modelOptions, IOpt
         metricsLog.TestMetrics.Add(testingMetrics.Metric);
         File.WriteAllText(metricsPath, JsonSerializer.Serialize(metricsLog, JsonOptions));
 
-        var finalReport = new FinalTrainingReport(
-            trainingState.CompletedEpochs,
-            testingMetrics.Loss,
-            testingMetrics.Metric);
-
-        SaveFinalArtifacts(outputRootPath, resultsPath, model, finalReport);
+        var testMetricsLog = CreateTestMetricsLog(trainingState.CompletedEpochs, testingMetrics);
+        SaveFinalArtifacts(runDirectoryPath, testMetricsPath, model, testMetricsLog);
 
         Console.WriteLine(
-            $"Training finished. Epochs: {finalReport.CompletedEpochs}, " +
-            $"test loss: {finalReport.TestLoss:F6}, test metric: {finalReport.TestMetric:F6}");
+            $"Training finished. Epochs: {trainingState.CompletedEpochs}, " +
+            $"test loss: {testingMetrics.Loss:F6}, test metric: {testingMetrics.Metric:F6}");
 
         return Task.CompletedTask;
     }
-
-    private static StubTextToMotionModel CreateModel() => new();
 
     private static StubEpochMetrics RunStubEpoch(
         StubTextToMotionModel model,
@@ -131,7 +127,7 @@ public class TextToMotionModelTrainer(IOptions<ModelSettings> modelOptions, IOpt
         int batchSize,
         bool training)
     {
-        using var scope = torch.NewDisposeScope();
+        using var scope = NewDisposeScope();
 
         var inputs = randn([batchSize, StubTextToMotionModel.InputFeatures]);
         var targets = zeros([batchSize, StubTextToMotionModel.OutputFeatures]);
@@ -149,41 +145,25 @@ public class TextToMotionModelTrainer(IOptions<ModelSettings> modelOptions, IOpt
         return new StubEpochMetrics(lossValue, 1.0f / (1.0f + lossValue));
     }
 
-    private static void SaveEpochArtifacts(
+    private static void SaveEpochWeights(
         string checkpointsPath,
-        string resultsPath,
         StubTextToMotionModel model,
-        TrainingState trainingState,
-        EpochSummary epochSummary)
+        int epoch)
     {
-        string weightsPath = Path.Combine(checkpointsPath, $"model-epoch-{epochSummary.Epoch:0000}.pt");
-        string checkpointInfoPath = Path.Combine(resultsPath, $"model-epoch-{epochSummary.Epoch:0000}.json");
-
+        string weightsPath = Path.Combine(checkpointsPath, $"model-epoch-{epoch:0000}.pt");
         model.save(weightsPath);
-
-        var checkpoint = new StubCheckpoint(
-            ModelName: model.GetType().Name,
-            WeightsPath: weightsPath,
-            Epoch: epochSummary.Epoch,
-            CompletedEpochs: trainingState.CompletedEpochs,
-            LearningRate: trainingState.LatestLearningRate,
-            Summary: epochSummary,
-            CreatedUtc: DateTime.UtcNow);
-
-        File.WriteAllText(checkpointInfoPath, JsonSerializer.Serialize(checkpoint, JsonOptions));
     }
 
     private static void SaveFinalArtifacts(
-        string outputRootPath,
-        string resultsPath,
+        string runDirectoryPath,
+        string testMetricsPath,
         StubTextToMotionModel model,
-        FinalTrainingReport report)
+        TrainerMetricsLog testMetrics)
     {
-        string finalWeightsPath = Path.Combine(outputRootPath, "model-final.pt");
-        string finalReportPath = Path.Combine(resultsPath, "final-report.json");
+        string finalWeightsPath = Path.Combine(runDirectoryPath, "model-final.pt");
 
         model.save(finalWeightsPath);
-        File.WriteAllText(finalReportPath, JsonSerializer.Serialize(report, JsonOptions));
+        File.WriteAllText(testMetricsPath, JsonSerializer.Serialize(testMetrics, JsonOptions));
     }
 
     private static string ResolveOutputRootPath(TrainingSettings settings)
@@ -194,6 +174,37 @@ public class TextToMotionModelTrainer(IOptions<ModelSettings> modelOptions, IOpt
 
         Directory.CreateDirectory(outputRootPath);
         return outputRootPath;
+    }
+
+    private static string CreateRunDirectory(string outputRootPath)
+    {
+        int nextRunNumber = Directory.GetDirectories(outputRootPath, "Run-*")
+            .Select(Path.GetFileName)
+            .Select(name =>
+            {
+                if (string.IsNullOrWhiteSpace(name))
+                    return 0;
+
+                string[] parts = name.Split('-', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                return parts.Length >= 2 && int.TryParse(parts[^1], out int number) ? number : 0;
+            })
+            .DefaultIfEmpty(0)
+            .Max() + 1;
+
+        string runDirectoryPath = Path.Combine(outputRootPath, $"Run-{nextRunNumber:0000}");
+        Directory.CreateDirectory(runDirectoryPath);
+        return runDirectoryPath;
+    }
+
+    private static TrainerMetricsLog CreateTestMetricsLog(int completedEpochs, StubEpochMetrics testingMetrics)
+    {
+        return new TrainerMetricsLog
+        {
+            Epochs = [completedEpochs],
+            TestLoss = [testingMetrics.Loss],
+            TestMetrics = [testingMetrics.Metric],
+            EpochSeconds = [0f]
+        };
     }
 
     private static void SetRandomSeed(int seed)
@@ -220,18 +231,5 @@ public class TextToMotionModelTrainer(IOptions<ModelSettings> modelOptions, IOpt
         float TrainMetric,
         float ValidationMetric,
         double EpochSeconds);
-
-    private sealed record FinalTrainingReport(
-        int CompletedEpochs,
-        float TestLoss,
-        float TestMetric);
-
-    private sealed record StubCheckpoint(
-        string ModelName,
-        string WeightsPath,
-        int Epoch,
-        int CompletedEpochs,
-        float LearningRate,
-        EpochSummary Summary,
-        DateTime CreatedUtc);
+    
 }
