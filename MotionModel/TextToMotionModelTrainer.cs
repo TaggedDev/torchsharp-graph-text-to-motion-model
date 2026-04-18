@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Microsoft.Extensions.Options;
 using TorchSharp;
 using static TorchSharp.torch;
@@ -14,6 +15,8 @@ public class TextToMotionModelTrainer(IOptions<ModelSettings> modelOptions, IOpt
         WriteIndented = true
     };
 
+    private static readonly Regex ModelCheckpointRegex = new(@"^model-epoch-(\d{4})\.pt$", RegexOptions.Compiled);
+
     private readonly ModelSettings _modelSettings = modelOptions.Value;
     private readonly TrainingSettings _trainingSettings = trainingOptions.Value;
 
@@ -25,30 +28,35 @@ public class TextToMotionModelTrainer(IOptions<ModelSettings> modelOptions, IOpt
         SetRandomSeed(_modelSettings.RandomSeed);
 
         string outputRootPath = ResolveOutputRootPath(_trainingSettings);
-        string runDirectoryPath = CreateRunDirectory(outputRootPath);
+        string runDirectoryPath = ResolveRunDirectory(outputRootPath, _trainingSettings);
         string checkpointsPath = Path.Combine(runDirectoryPath, "checkpoints");
         string resultsPath = Path.Combine(runDirectoryPath, "results");
         string metricsPath = Path.Combine(resultsPath, "metrics.json");
         string testMetricsPath = Path.Combine(resultsPath, "test-metrics.json");
-        string modelSettingsSnapshotPath = Path.Combine(runDirectoryPath, "model-settings.snapshot.json");
-        string trainingSettingsSnapshotPath = Path.Combine(runDirectoryPath, "training-settings.snapshot.json");
 
         Directory.CreateDirectory(runDirectoryPath);
         Directory.CreateDirectory(checkpointsPath);
         Directory.CreateDirectory(resultsPath);
 
-        File.WriteAllText(modelSettingsSnapshotPath, JsonSerializer.Serialize(_modelSettings, JsonOptions));
-        File.WriteAllText(trainingSettingsSnapshotPath, JsonSerializer.Serialize(_trainingSettings, JsonOptions));
-
-        var metricsLog = new TrainerMetricsLog();
-        var trainingState = new TrainingState();
+        var metricsLog = LoadOrCreateMetricsLog(metricsPath, _trainingSettings.LoadCheckpoint);
         var model = new StubTextToMotionModel();
         var optimizer = torch.optim.Adam(
             model.parameters(),
             lr: _modelSettings.LearningRate,
             weight_decay: _modelSettings.WeightDecay);
 
-        for (int epoch = 1; epoch <= maxEpochs; epoch++)
+        int startEpoch = 1;
+        if (_trainingSettings.LoadCheckpoint)
+            startEpoch = RestoreCheckpoint(runDirectoryPath, model, optimizer, metricsLog) + 1;
+
+        if (startEpoch > maxEpochs)
+        {
+            Console.WriteLine(
+                $"No training steps executed. Resume epoch {startEpoch} is greater than configured max epoch {maxEpochs}.");
+            return Task.CompletedTask;
+        }
+
+        for (int epoch = startEpoch; epoch <= maxEpochs; epoch++)
         {
             token.ThrowIfCancellationRequested();
 
@@ -71,18 +79,6 @@ public class TextToMotionModelTrainer(IOptions<ModelSettings> modelOptions, IOpt
 
             epochTimer.Stop();
 
-            trainingState.CompletedEpochs = epoch;
-            trainingState.LatestLearningRate = _modelSettings.LearningRate;
-
-            var epochSummary = new EpochSummary(
-                epoch,
-                maxEpochs,
-                trainingMetrics.Loss,
-                validationMetrics.Loss,
-                trainingMetrics.Metric,
-                validationMetrics.Metric,
-                epochTimer.Elapsed.TotalSeconds);
-
             metricsLog.Epochs.Add(epoch);
             metricsLog.TrainLoss.Add(trainingMetrics.Loss);
             metricsLog.ValidationLoss.Add(validationMetrics.Loss);
@@ -91,7 +87,7 @@ public class TextToMotionModelTrainer(IOptions<ModelSettings> modelOptions, IOpt
             metricsLog.EpochSeconds.Add((float)epochTimer.Elapsed.TotalSeconds);
 
             File.WriteAllText(metricsPath, JsonSerializer.Serialize(metricsLog, JsonOptions));
-            SaveEpochWeights(checkpointsPath, model, epochSummary.Epoch);
+            SaveEpochCheckpoint(checkpointsPath, model, optimizer, epoch);
 
             if (epoch % printEveryEpoch == 0 || epoch == 1 || epoch == maxEpochs)
             {
@@ -107,15 +103,11 @@ public class TextToMotionModelTrainer(IOptions<ModelSettings> modelOptions, IOpt
             batchSize: Math.Max(1, _modelSettings.EvaluationBatchSize),
             training: false);
 
-        metricsLog.TestLoss.Add(testingMetrics.Loss);
-        metricsLog.TestMetrics.Add(testingMetrics.Metric);
-        File.WriteAllText(metricsPath, JsonSerializer.Serialize(metricsLog, JsonOptions));
-
-        var testMetricsLog = CreateTestMetricsLog(trainingState.CompletedEpochs, testingMetrics);
-        SaveFinalArtifacts(runDirectoryPath, testMetricsPath, model, testMetricsLog);
+        var testMetricsLog = CreateTestMetricsLog(metricsLog.Epochs.LastOrDefault(), testingMetrics);
+        SaveFinalArtifacts(runDirectoryPath, testMetricsPath, model, optimizer, testMetricsLog);
 
         Console.WriteLine(
-            $"Training finished. Epochs: {trainingState.CompletedEpochs}, " +
+            $"Training finished. Epochs: {metricsLog.Epochs.LastOrDefault()}, " +
             $"test loss: {testingMetrics.Loss:F6}, test metric: {testingMetrics.Metric:F6}");
 
         return Task.CompletedTask;
@@ -145,25 +137,104 @@ public class TextToMotionModelTrainer(IOptions<ModelSettings> modelOptions, IOpt
         return new StubEpochMetrics(lossValue, 1.0f / (1.0f + lossValue));
     }
 
-    private static void SaveEpochWeights(
+    private static void SaveEpochCheckpoint(
         string checkpointsPath,
         StubTextToMotionModel model,
+        torch.optim.Optimizer optimizer,
         int epoch)
     {
-        string weightsPath = Path.Combine(checkpointsPath, $"model-epoch-{epoch:0000}.pt");
-        model.save(weightsPath);
+        model.save(Path.Combine(checkpointsPath, $"model-epoch-{epoch:0000}.pt"));
+        SaveOptimizerMetadata(Path.Combine(checkpointsPath, $"optimizer-epoch-{epoch:0000}.json"), optimizer);
     }
 
     private static void SaveFinalArtifacts(
         string runDirectoryPath,
         string testMetricsPath,
         StubTextToMotionModel model,
+        torch.optim.Optimizer optimizer,
         TrainerMetricsLog testMetrics)
     {
-        string finalWeightsPath = Path.Combine(runDirectoryPath, "model-final.pt");
-
-        model.save(finalWeightsPath);
+        model.save(Path.Combine(runDirectoryPath, "model-final.pt"));
+        SaveOptimizerMetadata(Path.Combine(runDirectoryPath, "optimizer-final.json"), optimizer);
         File.WriteAllText(testMetricsPath, JsonSerializer.Serialize(testMetrics, JsonOptions));
+    }
+
+    private static int RestoreCheckpoint(
+        string runDirectoryPath,
+        StubTextToMotionModel model,
+        torch.optim.Optimizer optimizer,
+        TrainerMetricsLog metricsLog)
+    {
+        string checkpointsPath = Path.Combine(runDirectoryPath, "checkpoints");
+        if (!Directory.Exists(checkpointsPath))
+            throw new InvalidOperationException($"Checkpoint directory does not exist: {checkpointsPath}");
+
+        int latestEpoch = Directory.GetFiles(checkpointsPath, "model-epoch-*.pt")
+            .Select(Path.GetFileName)
+            .Select(TryParseCheckpointEpoch)
+            .Where(epoch => epoch.HasValue)
+            .Select(epoch => epoch!.Value)
+            .DefaultIfEmpty(0)
+            .Max();
+
+        if (latestEpoch == 0)
+            throw new InvalidOperationException($"No model checkpoints found in {checkpointsPath}");
+
+        string modelCheckpointPath = Path.Combine(checkpointsPath, $"model-epoch-{latestEpoch:0000}.pt");
+        string optimizerCheckpointPath = Path.Combine(checkpointsPath, $"optimizer-epoch-{latestEpoch:0000}.json");
+
+        if (!File.Exists(optimizerCheckpointPath))
+            throw new InvalidOperationException($"Optimizer checkpoint does not exist: {optimizerCheckpointPath}");
+
+        model.load(modelCheckpointPath);
+        LoadOptimizerMetadata(optimizerCheckpointPath);
+
+        TrimMetricsToEpoch(metricsLog, latestEpoch);
+
+        Console.WriteLine($"Resumed training from Run-{Path.GetFileName(runDirectoryPath)?.Split('-').Last()} epoch {latestEpoch:0000}.");
+        return latestEpoch;
+    }
+
+    private static void SaveOptimizerMetadata(string optimizerPath, torch.optim.Optimizer optimizer)
+    {
+        var metadata = new OptimizerMetadata(
+            OptimizerType: optimizer.GetType().Name);
+
+        File.WriteAllText(optimizerPath, JsonSerializer.Serialize(metadata, JsonOptions));
+    }
+
+    private static void LoadOptimizerMetadata(string optimizerPath)
+    {
+        if (!File.Exists(optimizerPath))
+            throw new InvalidOperationException($"Optimizer checkpoint does not exist: {optimizerPath}");
+
+        _ = JsonSerializer.Deserialize<OptimizerMetadata>(File.ReadAllText(optimizerPath), JsonOptions)
+            ?? throw new InvalidOperationException($"Optimizer checkpoint is invalid: {optimizerPath}");
+    }
+
+    private static void TrimMetricsToEpoch(TrainerMetricsLog metricsLog, int epochCount)
+    {
+        TrimList(metricsLog.Epochs, epochCount);
+        TrimList(metricsLog.TrainLoss, epochCount);
+        TrimList(metricsLog.ValidationLoss, epochCount);
+        TrimList(metricsLog.TrainMetrics, epochCount);
+        TrimList(metricsLog.ValidationMetrics, epochCount);
+        TrimList(metricsLog.EpochSeconds, epochCount);
+    }
+
+    private static void TrimList<T>(List<T> values, int count)
+    {
+        if (values.Count > count)
+            values.RemoveRange(count, values.Count - count);
+    }
+
+    private static int? TryParseCheckpointEpoch(string? fileName)
+    {
+        if (string.IsNullOrWhiteSpace(fileName))
+            return null;
+
+        var match = ModelCheckpointRegex.Match(fileName);
+        return match.Success && int.TryParse(match.Groups[1].Value, out int epoch) ? epoch : null;
     }
 
     private static string ResolveOutputRootPath(TrainingSettings settings)
@@ -176,8 +247,20 @@ public class TextToMotionModelTrainer(IOptions<ModelSettings> modelOptions, IOpt
         return outputRootPath;
     }
 
-    private static string CreateRunDirectory(string outputRootPath)
+    private static string ResolveRunDirectory(string outputRootPath, TrainingSettings settings)
     {
+        if (settings.LoadCheckpoint)
+        {
+            if (settings.LoadRunNumber <= 0)
+                throw new InvalidOperationException("Training.LoadRunNumber must be greater than 0 when Training.LoadCheckpoint is true.");
+
+            string existingRunPath = Path.Combine(outputRootPath, $"Run-{settings.LoadRunNumber:0000}");
+            if (!Directory.Exists(existingRunPath))
+                throw new InvalidOperationException($"Run directory does not exist: {existingRunPath}");
+
+            return existingRunPath;
+        }
+
         int nextRunNumber = Directory.GetDirectories(outputRootPath, "Run-*")
             .Select(Path.GetFileName)
             .Select(name =>
@@ -196,14 +279,22 @@ public class TextToMotionModelTrainer(IOptions<ModelSettings> modelOptions, IOpt
         return runDirectoryPath;
     }
 
+    private static TrainerMetricsLog LoadOrCreateMetricsLog(string metricsPath, bool loadCheckpoint)
+    {
+        if (!loadCheckpoint || !File.Exists(metricsPath))
+            return new TrainerMetricsLog();
+
+        return JsonSerializer.Deserialize<TrainerMetricsLog>(File.ReadAllText(metricsPath), JsonOptions)
+               ?? new TrainerMetricsLog();
+    }
+
     private static TrainerMetricsLog CreateTestMetricsLog(int completedEpochs, StubEpochMetrics testingMetrics)
     {
         return new TrainerMetricsLog
         {
             Epochs = [completedEpochs],
             TestLoss = [testingMetrics.Loss],
-            TestMetrics = [testingMetrics.Metric],
-            EpochSeconds = [0f]
+            TestMetrics = [testingMetrics.Metric]
         };
     }
 
@@ -215,21 +306,7 @@ public class TextToMotionModelTrainer(IOptions<ModelSettings> modelOptions, IOpt
             torch.cuda.manual_seed(normalizedSeed);
     }
 
-    private sealed class TrainingState
-    {
-        public int CompletedEpochs { get; set; }
-        public float LatestLearningRate { get; set; }
-    }
-
     private sealed record StubEpochMetrics(float Loss, float Metric);
 
-    private sealed record EpochSummary(
-        int Epoch,
-        int MaxEpochs,
-        float TrainLoss,
-        float ValidationLoss,
-        float TrainMetric,
-        float ValidationMetric,
-        double EpochSeconds);
-    
+    private sealed record OptimizerMetadata(string OptimizerType);
 }
