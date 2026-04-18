@@ -21,6 +21,7 @@ using IHost host = Host.CreateDefaultBuilder(args)
         services.AddSingleton<TrainingPipeline>();
         services.AddSingleton<ClipModelOnnxInference>();
         services.AddSingleton<DataPreprocessor>();
+        services.AddSingleton<ModelCheckpointService>();
         services.AddSingleton<TextToMotionModelTrainer>();
         services.Configure<ModelSettings>(
             configuration.GetSection("Model"));
