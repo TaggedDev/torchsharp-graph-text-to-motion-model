@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Text.Json;
 using Microsoft.Extensions.Options;
 using TorchSharp;
 using static TorchSharp.torch;
@@ -10,13 +9,9 @@ namespace Text2Motion.TorchTrainer;
 public class TextToMotionModelTrainer(
     IOptions<ModelSettings> modelOptions,
     IOptions<TrainingSettings> trainingOptions,
-    ModelCheckpointService checkpointService)
+    ModelCheckpointService checkpointService,
+    TrainingMetricsService metricsService)
 {
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        WriteIndented = true
-    };
-
     private readonly ModelSettings _modelSettings = modelOptions.Value;
     private readonly TrainingSettings _trainingSettings = trainingOptions.Value;
 
@@ -38,7 +33,7 @@ public class TextToMotionModelTrainer(
         Directory.CreateDirectory(checkpointsPath);
         Directory.CreateDirectory(resultsPath);
 
-        var metricsLog = LoadOrCreateMetricsLog(metricsPath, _trainingSettings.LoadCheckpoint);
+        metricsService.Initialize(metricsPath, _trainingSettings.LoadCheckpoint);
         var model = new StubTextToMotionModel();
         var optimizer = optim.Adam(
             model.parameters(),
@@ -47,7 +42,7 @@ public class TextToMotionModelTrainer(
 
         int startEpoch = 1;
         if (_trainingSettings.LoadCheckpoint)
-            startEpoch = checkpointService.RestoreCheckpoint(runDirectoryPath, model, metricsLog) + 1;
+            startEpoch = checkpointService.RestoreCheckpoint(runDirectoryPath, model, metricsService.Log) + 1;
 
         if (startEpoch > maxEpochs)
         {
@@ -79,14 +74,14 @@ public class TextToMotionModelTrainer(
 
             epochTimer.Stop();
 
-            metricsLog.Epochs.Add(epoch);
-            metricsLog.TrainLoss.Add(trainingMetrics.Loss);
-            metricsLog.ValidationLoss.Add(validationMetrics.Loss);
-            metricsLog.TrainMetrics.Add(trainingMetrics.Metric);
-            metricsLog.ValidationMetrics.Add(validationMetrics.Metric);
-            metricsLog.EpochSeconds.Add((float)epochTimer.Elapsed.TotalSeconds);
+            metricsService.RecordEpoch(
+                epoch,
+                trainingMetrics.Loss,
+                trainingMetrics.Metric,
+                validationMetrics.Loss,
+                validationMetrics.Metric,
+                (float)epochTimer.Elapsed.TotalSeconds);
 
-            File.WriteAllText(metricsPath, JsonSerializer.Serialize(metricsLog, JsonOptions));
             checkpointService.SaveEpochCheckpoint(checkpointsPath, model, epoch);
 
             if (epoch % printEveryEpoch == 0 || epoch == 1 || epoch == maxEpochs)
@@ -103,11 +98,14 @@ public class TextToMotionModelTrainer(
             batchSize: Math.Max(1, _modelSettings.EvaluationBatchSize),
             training: false);
 
-        var testMetricsLog = CreateTestMetricsLog(metricsLog.Epochs.LastOrDefault(), testingMetrics);
+        var testMetricsLog = metricsService.CreateTestMetricsLog(
+            metricsService.Log.Epochs.LastOrDefault(),
+            testingMetrics.Loss,
+            testingMetrics.Metric);
         checkpointService.SaveFinalArtifacts(runDirectoryPath, testMetricsPath, model, testMetricsLog);
 
         Console.WriteLine(
-            $"Training finished. Epochs: {metricsLog.Epochs.LastOrDefault()}, " +
+            $"Training finished. Epochs: {metricsService.Log.Epochs.LastOrDefault()}, " +
             $"test loss: {testingMetrics.Loss:F6}, test metric: {testingMetrics.Metric:F6}");
 
         return Task.CompletedTask;
@@ -177,25 +175,6 @@ public class TextToMotionModelTrainer(
         string runDirectoryPath = Path.Combine(outputRootPath, $"Run-{nextRunNumber:0000}");
         Directory.CreateDirectory(runDirectoryPath);
         return runDirectoryPath;
-    }
-
-    private static TrainerMetricsLog LoadOrCreateMetricsLog(string metricsPath, bool loadCheckpoint)
-    {
-        if (!loadCheckpoint || !File.Exists(metricsPath))
-            return new TrainerMetricsLog();
-
-        return JsonSerializer.Deserialize<TrainerMetricsLog>(File.ReadAllText(metricsPath), JsonOptions)
-               ?? new TrainerMetricsLog();
-    }
-
-    private static TrainerMetricsLog CreateTestMetricsLog(int completedEpochs, StubEpochMetrics testingMetrics)
-    {
-        return new TrainerMetricsLog
-        {
-            Epochs = [completedEpochs],
-            TestLoss = [testingMetrics.Loss],
-            TestMetrics = [testingMetrics.Metric]
-        };
     }
 
     private static void SetRandomSeed(int seed)
