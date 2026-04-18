@@ -72,6 +72,12 @@ public class TextToMotionModelTrainer(
                 batchSize: Math.Max(1, _modelSettings.EvaluationBatchSize),
                 training: false);
 
+            var valSnapshot = EvaluateMotionMetrics(
+                model,
+                Math.Max(1, _modelSettings.EvaluationBatchSize),
+                epoch,
+                MotionEvalPhase.Validation);
+
             epochTimer.Stop();
 
             metricsService.RecordEpoch(
@@ -81,6 +87,8 @@ public class TextToMotionModelTrainer(
                 validationMetrics.Loss,
                 validationMetrics.Metric,
                 (float)epochTimer.Elapsed.TotalSeconds);
+
+            metricsService.RecordMotionMetrics(valSnapshot);
 
             checkpointService.SaveEpochCheckpoint(checkpointsPath, model, epoch);
 
@@ -98,10 +106,18 @@ public class TextToMotionModelTrainer(
             batchSize: Math.Max(1, _modelSettings.EvaluationBatchSize),
             training: false);
 
+        var testSnapshot = EvaluateMotionMetrics(
+            model,
+            Math.Max(1, _modelSettings.EvaluationBatchSize),
+            metricsService.Log.Epochs.LastOrDefault(),
+            MotionEvalPhase.Test);
+
         var testMetricsLog = metricsService.CreateTestMetricsLog(
             metricsService.Log.Epochs.LastOrDefault(),
             testingMetrics.Loss,
             testingMetrics.Metric);
+
+        metricsService.RecordMotionMetrics(testSnapshot);
         checkpointService.SaveFinalArtifacts(runDirectoryPath, testMetricsPath, model, testMetricsLog);
 
         Console.WriteLine(
@@ -133,6 +149,28 @@ public class TextToMotionModelTrainer(
 
         float lossValue = loss.ToSingle();
         return new StubEpochMetrics(lossValue, 1.0f / (1.0f + lossValue));
+    }
+
+    private static MotionEvalSnapshot EvaluateMotionMetrics(
+        StubTextToMotionModel model,
+        int batchSize,
+        int epoch,
+        MotionEvalPhase phase)
+    {
+        using var scope = NewDisposeScope();
+
+        var motionFeatures = randn([batchSize, StubTextToMotionModel.OutputFeatures]);
+        var textFeatures = randn([batchSize, StubTextToMotionModel.OutputFeatures]);
+
+        return new MotionEvalSnapshot(
+            epoch, phase,
+            RPrecisionMetric.Compute(motionFeatures, textFeatures, topK: 1),
+            RPrecisionMetric.Compute(motionFeatures, textFeatures, topK: 2),
+            RPrecisionMetric.Compute(motionFeatures, textFeatures, topK: 3),
+            FrechetInceptionDistanceMetric.Compute(motionFeatures, textFeatures),
+            MultimodalDistanceMetric.Compute(motionFeatures, textFeatures),
+            DiversityMetric.Compute(motionFeatures),
+            MultimodalityMetric.Compute(motionFeatures, numModalities: 10));
     }
 
     private static string ResolveOutputRootPath(TrainingSettings settings)

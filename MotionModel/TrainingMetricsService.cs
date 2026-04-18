@@ -48,6 +48,12 @@ public class TrainingMetricsService
         };
     }
 
+    public void RecordMotionMetrics(MotionEvalSnapshot snapshot)
+    {
+        _log.MotionEvalSnapshots.Add(snapshot);
+        File.WriteAllText(_metricsPath, JsonSerializer.Serialize(_log, JsonOptions));
+    }
+
     private static TrainerMetricsLog LoadOrCreateLog(string metricsPath, bool loadCheckpoint)
     {
         if (!loadCheckpoint || !File.Exists(metricsPath))
