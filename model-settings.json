@@ -1,2 +1,24 @@
-﻿{
+{
+  "Model": {
+    "MaxEpochs": 50,
+    "PrintEveryEpoch": 5,
+    "RandomSeed": 42,
+    "BatchSize": 64,
+    "EvaluationBatchSize": 64,
+    "LearningRate": 0.0001,
+    "WeightDecay": 0.01,
+    "Device": "cuda",
+    "FixedFrames": 60,
+    "FeatureDim": 263,
+    "TextEmbeddingDim": 512,
+    "HiddenDim": 1024,
+    "NumHiddenLayers": 3,
+    "TrainSplitPath": "D:\\Code\\CSharp\\text-to-motion\\dataset\\train.txt",
+    "ValidationSplitPath": "D:\\Code\\CSharp\\text-to-motion\\dataset\\val.txt",
+    "TestSplitPath": "D:\\Code\\CSharp\\text-to-motion\\dataset\\test.txt",
+    "JointsPath": "D:\\Code\\CSharp\\text-to-motion\\dataset\\new_joint_vecs",
+    "EmbeddingsPath": "D:\\Code\\CSharp\\text-to-motion\\dataset\\texts-embeddings",
+    "NormalizationMeanPath": "D:\\Code\\CSharp\\text-to-motion\\dataset\\Mean.npy",
+    "NormalizationStdPath": "D:\\Code\\CSharp\\text-to-motion\\dataset\\Std.npy"
+  }
 }

@@ -1,6 +1,10 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Options;
+using TorchSharp;
+using TorchSharp.Modules;
+using static TorchSharp.torch;
+using static TorchSharp.torch.nn;
 
 namespace Text2Motion.TorchTrainer;
 
@@ -15,7 +19,7 @@ public class ModelCheckpointService(IOptions<ModelSettings> modelOptions)
 
     private readonly ModelSettings _modelSettings = modelOptions.Value;
 
-    public void SaveEpochCheckpoint(string checkpointsPath, StubTextToMotionModel model, int epoch)
+    public void SaveEpochCheckpoint(string checkpointsPath, Module<Tensor, Tensor> model, int epoch)
     {
         var checkpoint = new CheckpointMetadata
         {
@@ -32,7 +36,7 @@ public class ModelCheckpointService(IOptions<ModelSettings> modelOptions)
     }
 
     public void SaveFinalArtifacts(string runDirectoryPath, string testMetricsPath,
-        StubTextToMotionModel model, TrainerMetricsLog testMetrics)
+        Module<Tensor, Tensor> model, TrainerMetricsLog testMetrics)
     {
         var checkpoint = new CheckpointMetadata
         {
@@ -49,7 +53,7 @@ public class ModelCheckpointService(IOptions<ModelSettings> modelOptions)
         File.WriteAllText(testMetricsPath, JsonSerializer.Serialize(testMetrics, JsonOptions));
     }
 
-    public int RestoreCheckpoint(string runDirectoryPath, StubTextToMotionModel model,
+    public int RestoreCheckpoint(string runDirectoryPath, Module<Tensor, Tensor> model,
         TrainerMetricsLog metricsLog)
     {
         string checkpointsPath = Path.Combine(runDirectoryPath, "checkpoints");

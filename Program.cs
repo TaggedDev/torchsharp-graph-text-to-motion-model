@@ -3,7 +3,11 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Text2Motion.ClipModel;
 using Text2Motion.DataPreprocessing;
+using Text2Motion.Dataset;
 using Text2Motion.TorchTrainer;
+using TorchSharp;
+using TorchSharp.Modules;
+using static TorchSharp.torch;
 
 using IHost host = Host.CreateDefaultBuilder(args)
     .ConfigureAppConfiguration((_, config) =>
@@ -23,6 +27,9 @@ using IHost host = Host.CreateDefaultBuilder(args)
         services.AddSingleton<DataPreprocessor>();
         services.AddSingleton<ModelCheckpointService>();
         services.AddSingleton<TrainingMetricsService>();
+        services.AddSingleton<BaselineMLPModel>();
+        services.AddSingleton(sp => (nn.Module<Tensor, Tensor>)sp.GetRequiredService<BaselineMLPModel>());
+        services.AddSingleton<HumanML3DDataset>();
         services.AddSingleton<TextToMotionModelTrainer>();
         services.Configure<ModelSettings>(
             configuration.GetSection("Model"));
