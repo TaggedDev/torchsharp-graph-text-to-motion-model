@@ -12,14 +12,15 @@ public sealed class BaselineMLPModel : Module<Tensor, Tensor>
     private readonly List<LayerNorm> _layerNorms = new();
     private readonly Linear _outputLayer;
 
-    public BaselineMLPModel(IOptions<ModelSettings> settings) : base(nameof(BaselineMLPModel))
+    public BaselineMLPModel(IOptions<BaselineMLPModelConfig> config, IOptions<DatasetSettings> dataset) : base(nameof(BaselineMLPModel))
     {
-        var config = settings.Value;
-        int outputDim = config.FixedFrames * config.FeatureDim;
+        var cfg = config.Value;
+        var ds = dataset.Value;
+        int outputDim = ds.FixedFrames * ds.FeatureDim;
 
-        int inputDim = config.TextEmbeddingDim;
-        int hiddenDim = config.HiddenDim;
-        int numLayers = config.NumHiddenLayers;
+        int inputDim = ds.TextEmbeddingDim;
+        int hiddenDim = cfg.HiddenDim;
+        int numLayers = cfg.NumHiddenLayers;
 
         for (int i = 0; i < numLayers; i++)
         {
