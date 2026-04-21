@@ -14,6 +14,7 @@ using IHost host = Host.CreateDefaultBuilder(args)
         config.AddJsonFile("preprocessing-config.json", optional: false, reloadOnChange: true);
         config.AddJsonFile("ModelConfigs/BaselineMLPModelConfig.json", optional: false, reloadOnChange: true);
         config.AddJsonFile("ModelConfigs/StubModelConfig.json", optional: false, reloadOnChange: true);
+        config.AddJsonFile("ModelConfigs/GcnSpatialTemporalConfig.json", optional: false, reloadOnChange: true);
         config.AddEnvironmentVariables(prefix: "AI_");
     })
     .ConfigureServices((context, services) =>
@@ -26,7 +27,7 @@ using IHost host = Host.CreateDefaultBuilder(args)
         services.AddSingleton<DataPreprocessor>();
         services.AddSingleton<ModelCheckpointService>();
         services.AddSingleton<TrainingMetricsService>();
-        services.AddMotionModel<BaselineMLPModel, BaselineMLPModelConfig>(configuration);
+        services.AddMotionModel<GcnSpatialTemporalModel, GcnSpatialTemporalConfig>(configuration);
         services.AddSingleton<HumanML3DDataset>();
         services.AddSingleton<TextToMotionModelTrainer>();
         services.Configure<DatasetSettings>(
