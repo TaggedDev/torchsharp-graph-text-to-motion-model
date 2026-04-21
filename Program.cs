@@ -12,9 +12,11 @@ using static TorchSharp.torch;
 using IHost host = Host.CreateDefaultBuilder(args)
     .ConfigureAppConfiguration((_, config) =>
     {
-        config.AddJsonFile("model-settings.json", optional: false, reloadOnChange: true);
         config.AddJsonFile("training-settings.json", optional: false, reloadOnChange: true);
+        config.AddJsonFile("dataset-settings.json", optional: false, reloadOnChange: true);
         config.AddJsonFile("preprocessing-config.json", optional: false, reloadOnChange: true);
+        config.AddJsonFile("ModelConfigs/BaselineMLPModelConfig.json", optional: false, reloadOnChange: true);
+        config.AddJsonFile("ModelConfigs/StubModelConfig.json", optional: false, reloadOnChange: true);
         config.AddEnvironmentVariables(prefix: "AI_");
     })
     .ConfigureServices((context, services) =>
@@ -27,12 +29,13 @@ using IHost host = Host.CreateDefaultBuilder(args)
         services.AddSingleton<DataPreprocessor>();
         services.AddSingleton<ModelCheckpointService>();
         services.AddSingleton<TrainingMetricsService>();
-        services.AddSingleton<BaselineMLPModel>();
-        services.AddSingleton(sp => (nn.Module<Tensor, Tensor>)sp.GetRequiredService<BaselineMLPModel>());
+        services.AddMotionModel<BaselineMLPModel, BaselineMLPModelConfig>(configuration);
         services.AddSingleton<HumanML3DDataset>();
         services.AddSingleton<TextToMotionModelTrainer>();
         services.Configure<ModelSettings>(
             configuration.GetSection("Model"));
+        services.Configure<DatasetSettings>(
+            configuration.GetSection("Dataset"));
         services.Configure<TrainingSettings>(
             configuration.GetSection("Training"));
         services.Configure<PreprocessingConfig>(configuration);
