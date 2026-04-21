@@ -32,7 +32,7 @@ using IHost host = Host.CreateDefaultBuilder(args)
         services.AddMotionModel<BaselineMLPModel, BaselineMLPModelConfig>(configuration);
         services.AddSingleton<HumanML3DDataset>();
         services.AddSingleton<TextToMotionModelTrainer>();
-        services.Configure<ModelSettings>(
+        services.Configure<TrainingConfig>(
             configuration.GetSection("Model"));
         services.Configure<DatasetSettings>(
             configuration.GetSection("Dataset"));

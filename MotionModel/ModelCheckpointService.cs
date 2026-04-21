@@ -1,14 +1,12 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Options;
-using TorchSharp;
-using TorchSharp.Modules;
 using static TorchSharp.torch;
 using static TorchSharp.torch.nn;
 
 namespace Text2Motion.TorchTrainer;
 
-public class ModelCheckpointService(IOptions<ModelSettings> modelOptions)
+public class ModelCheckpointService(IOptions<TrainingConfig> modelOptions)
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -17,15 +15,15 @@ public class ModelCheckpointService(IOptions<ModelSettings> modelOptions)
 
     private static readonly Regex CheckpointRegex = new(@"^checkpoint-epoch-(\d{4})\.pt$", RegexOptions.Compiled);
 
-    private readonly ModelSettings _modelSettings = modelOptions.Value;
+    private readonly TrainingConfig _trainingConfig = modelOptions.Value;
 
     public void SaveEpochCheckpoint(string checkpointsPath, Module<Tensor, Tensor> model, int epoch)
     {
         var checkpoint = new CheckpointMetadata
         {
             Epoch = epoch,
-            LearningRate = _modelSettings.LearningRate,
-            WeightDecay = _modelSettings.WeightDecay
+            LearningRate = _trainingConfig.LearningRate,
+            WeightDecay = _trainingConfig.WeightDecay
         };
 
         string modelPath = Path.Combine(checkpointsPath, $"checkpoint-epoch-{epoch:0000}.pt");
@@ -41,8 +39,8 @@ public class ModelCheckpointService(IOptions<ModelSettings> modelOptions)
         var checkpoint = new CheckpointMetadata
         {
             Epoch = -1,
-            LearningRate = _modelSettings.LearningRate,
-            WeightDecay = _modelSettings.WeightDecay
+            LearningRate = _trainingConfig.LearningRate,
+            WeightDecay = _trainingConfig.WeightDecay
         };
 
         string modelPath = Path.Combine(runDirectoryPath, "checkpoint-final.pt");
