@@ -8,14 +8,14 @@ using static TorchSharp.torch.nn;
 namespace Text2Motion.TorchTrainer;
 
 public class TextToMotionModelTrainer(
-    IOptions<ModelSettings> modelOptions,
+    IOptions<TrainingConfig> modelOptions,
     IOptions<TrainingSettings> trainingOptions,
     ModelCheckpointService checkpointService,
     TrainingMetricsService metricsService,
     Module<Tensor, Tensor> model,
     HumanML3DDataset dataset)
 {
-    private readonly ModelSettings _modelSettings = modelOptions.Value;
+    private readonly TrainingConfig _modelSettings = modelOptions.Value;
     private readonly TrainingSettings _trainingSettings = trainingOptions.Value;
 
     public async Task TrainAsync(CancellationToken token)
