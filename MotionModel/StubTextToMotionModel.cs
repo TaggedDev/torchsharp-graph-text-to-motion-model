@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Options;
 using TorchSharp;
 using TorchSharp.Modules;
 using static TorchSharp.torch;
@@ -11,17 +12,14 @@ namespace Text2Motion.TorchTrainer;
 /// </summary>
 public sealed class StubTextToMotionModel : Module<Tensor, Tensor>
 {
-    public const int InputFeatures = 16;
-    public const int HiddenFeatures = 32;
-    public const int OutputFeatures = 16;
-
     private readonly Linear _inputProjection;
     private readonly Linear _outputProjection;
 
-    public StubTextToMotionModel() : base(nameof(StubTextToMotionModel))
+    public StubTextToMotionModel(IOptions<StubModelConfig> config) : base(nameof(StubTextToMotionModel))
     {
-        _inputProjection = Linear(InputFeatures, HiddenFeatures);
-        _outputProjection = Linear(HiddenFeatures, OutputFeatures);
+        var cfg = config.Value;
+        _inputProjection = Linear(cfg.InputFeatures, cfg.HiddenFeatures);
+        _outputProjection = Linear(cfg.HiddenFeatures, cfg.OutputFeatures);
 
         RegisterComponents();
     }
