@@ -6,7 +6,7 @@ using static TorchSharp.torch.nn;
 
 namespace Text2Motion.TorchTrainer;
 
-public class ModelCheckpointService(IOptions<TrainingConfig> modelOptions)
+public class ModelCheckpointService(IOptions<TrainingSettings> options)
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -15,15 +15,15 @@ public class ModelCheckpointService(IOptions<TrainingConfig> modelOptions)
 
     private static readonly Regex CheckpointRegex = new(@"^checkpoint-epoch-(\d{4})\.pt$", RegexOptions.Compiled);
 
-    private readonly TrainingConfig _trainingConfig = modelOptions.Value;
+    private readonly TrainingSettings _settings = options.Value;
 
     public void SaveEpochCheckpoint(string checkpointsPath, Module<Tensor, Tensor> model, int epoch)
     {
         var checkpoint = new CheckpointMetadata
         {
             Epoch = epoch,
-            LearningRate = _trainingConfig.LearningRate,
-            WeightDecay = _trainingConfig.WeightDecay
+            LearningRate = _settings.LearningRate,
+            WeightDecay = _settings.WeightDecay
         };
 
         string modelPath = Path.Combine(checkpointsPath, $"checkpoint-epoch-{epoch:0000}.pt");
@@ -39,8 +39,8 @@ public class ModelCheckpointService(IOptions<TrainingConfig> modelOptions)
         var checkpoint = new CheckpointMetadata
         {
             Epoch = -1,
-            LearningRate = _trainingConfig.LearningRate,
-            WeightDecay = _trainingConfig.WeightDecay
+            LearningRate = _settings.LearningRate,
+            WeightDecay = _settings.WeightDecay
         };
 
         string modelPath = Path.Combine(runDirectoryPath, "checkpoint-final.pt");

@@ -5,9 +5,6 @@ using Text2Motion.ClipModel;
 using Text2Motion.DataPreprocessing;
 using Text2Motion.Dataset;
 using Text2Motion.TorchTrainer;
-using TorchSharp;
-using TorchSharp.Modules;
-using static TorchSharp.torch;
 
 using IHost host = Host.CreateDefaultBuilder(args)
     .ConfigureAppConfiguration((_, config) =>
@@ -32,8 +29,6 @@ using IHost host = Host.CreateDefaultBuilder(args)
         services.AddMotionModel<BaselineMLPModel, BaselineMLPModelConfig>(configuration);
         services.AddSingleton<HumanML3DDataset>();
         services.AddSingleton<TextToMotionModelTrainer>();
-        services.Configure<TrainingConfig>(
-            configuration.GetSection("Model"));
         services.Configure<DatasetSettings>(
             configuration.GetSection("Dataset"));
         services.Configure<TrainingSettings>(

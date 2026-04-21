@@ -8,26 +8,24 @@ using static TorchSharp.torch.nn;
 namespace Text2Motion.TorchTrainer;
 
 public class TextToMotionModelTrainer(
-    IOptions<TrainingConfig> modelOptions,
     IOptions<TrainingSettings> trainingOptions,
     ModelCheckpointService checkpointService,
     TrainingMetricsService metricsService,
     Module<Tensor, Tensor> model,
     HumanML3DDataset dataset)
 {
-    private readonly TrainingConfig _modelSettings = modelOptions.Value;
-    private readonly TrainingSettings _trainingSettings = trainingOptions.Value;
+    private readonly TrainingSettings _settings = trainingOptions.Value;
 
     public async Task TrainAsync(CancellationToken token)
     {
-        int maxEpochs = Math.Max(1, _modelSettings.MaxEpochs);
-        int printEveryEpoch = Math.Max(1, _modelSettings.PrintEveryEpoch);
+        int maxEpochs = Math.Max(1, _settings.MaxEpochs);
+        int printEveryEpoch = Math.Max(1, _settings.PrintEveryEpoch);
 
-        SetRandomSeed(_modelSettings.RandomSeed);
+        SetRandomSeed(_settings.RandomSeed);
         await dataset.LoadAsync();
 
-        string outputRootPath = ResolveOutputRootPath(_trainingSettings);
-        string runDirectoryPath = ResolveRunDirectory(outputRootPath, _trainingSettings);
+        string outputRootPath = ResolveOutputRootPath(_settings);
+        string runDirectoryPath = ResolveRunDirectory(outputRootPath, _settings);
         string checkpointsPath = Path.Combine(runDirectoryPath, "checkpoints");
         string resultsPath = Path.Combine(runDirectoryPath, "results");
         string metricsPath = Path.Combine(resultsPath, "metrics.json");
@@ -37,14 +35,14 @@ public class TextToMotionModelTrainer(
         Directory.CreateDirectory(checkpointsPath);
         Directory.CreateDirectory(resultsPath);
 
-        metricsService.Initialize(metricsPath, _trainingSettings.LoadCheckpoint);
+        metricsService.Initialize(metricsPath, _settings.LoadCheckpoint);
         var optimizer = optim.AdamW(
             model.parameters(),
-            lr: _modelSettings.LearningRate,
-            weight_decay: _modelSettings.WeightDecay);
+            lr: _settings.LearningRate,
+            weight_decay: _settings.WeightDecay);
 
         int startEpoch = 1;
-        if (_trainingSettings.LoadCheckpoint)
+        if (_settings.LoadCheckpoint)
             startEpoch = checkpointService.RestoreCheckpoint(runDirectoryPath, model, metricsService.Log) + 1;
 
         if (startEpoch > maxEpochs)
@@ -54,7 +52,7 @@ public class TextToMotionModelTrainer(
             return;
         }
 
-        var device = ResolveDevice(_modelSettings.Device);
+        var device = ResolveDevice(_settings.Device);
         model = model.to(device);
 
         for (int epoch = startEpoch; epoch <= maxEpochs; epoch++)
@@ -69,7 +67,7 @@ public class TextToMotionModelTrainer(
                 model,
                 dataset.Train,
                 optimizer,
-                batchSize: Math.Max(1, _modelSettings.BatchSize),
+                batchSize: Math.Max(1, _settings.BatchSize),
                 device,
                 training: true);
 
@@ -78,7 +76,7 @@ public class TextToMotionModelTrainer(
                 model,
                 dataset.Val,
                 optimizer: null,
-                batchSize: Math.Max(1, _modelSettings.EvaluationBatchSize),
+                batchSize: Math.Max(1, _settings.EvaluationBatchSize),
                 device,
                 training: false);
 
@@ -86,7 +84,7 @@ public class TextToMotionModelTrainer(
                 model,
                 dataset.Val,
                 device,
-                Math.Max(1, _modelSettings.EvaluationBatchSize),
+                Math.Max(1, _settings.EvaluationBatchSize),
                 epoch,
                 MotionEvalPhase.Validation);
 
@@ -116,7 +114,7 @@ public class TextToMotionModelTrainer(
             model,
             dataset.Test,
             optimizer: null,
-            batchSize: Math.Max(1, _modelSettings.EvaluationBatchSize),
+            batchSize: Math.Max(1, _settings.EvaluationBatchSize),
             device,
             training: false);
 
@@ -124,7 +122,7 @@ public class TextToMotionModelTrainer(
             model,
             dataset.Test,
             device,
-            Math.Max(1, _modelSettings.EvaluationBatchSize),
+            Math.Max(1, _settings.EvaluationBatchSize),
             metricsService.Log.Epochs.LastOrDefault(),
             MotionEvalPhase.Test);
 
