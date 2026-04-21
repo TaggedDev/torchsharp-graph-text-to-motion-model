@@ -56,7 +56,6 @@ public class TextToMotionModelTrainer(
 
         var device = ResolveDevice(_modelSettings.Device);
         model = model.to(device);
-        model = model.to(device);
 
         for (int epoch = startEpoch; epoch <= maxEpochs; epoch++)
         {
