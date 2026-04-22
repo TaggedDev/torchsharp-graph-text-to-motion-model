@@ -12,9 +12,9 @@ using IHost host = Host.CreateDefaultBuilder(args)
         config.AddJsonFile("training-settings.json", optional: false, reloadOnChange: true);
         config.AddJsonFile("dataset-settings.json", optional: false, reloadOnChange: true);
         config.AddJsonFile("preprocessing-config.json", optional: false, reloadOnChange: true);
-        config.AddJsonFile("ModelConfigs/BaselineMLPModelConfig.json", optional: false, reloadOnChange: true);
-        config.AddJsonFile("ModelConfigs/StubModelConfig.json", optional: false, reloadOnChange: true);
-        config.AddJsonFile("ModelConfigs/GcnSpatialTemporalConfig.json", optional: false, reloadOnChange: true);
+        config.AddJsonFile("configs/BaselineMLPModelConfig.json", optional: false, reloadOnChange: true);
+        config.AddJsonFile("configs/StubModelConfig.json", optional: false, reloadOnChange: true);
+        config.AddJsonFile("configs/GcnSpatialTemporalConfig.json", optional: false, reloadOnChange: true);
         config.AddEnvironmentVariables(prefix: "AI_");
     })
     .ConfigureServices((context, services) =>
