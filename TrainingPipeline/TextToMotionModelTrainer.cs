@@ -37,10 +37,9 @@ public class TextToMotionModelTrainer(
         Directory.CreateDirectory(resultsPath);
 
         metricsService.Initialize(metricsPath, _settings.LoadCheckpoint);
-        var optimizer = optim.AdamW(
-            model.parameters(),
-            lr: _settings.LearningRate,
-            weight_decay: _settings.WeightDecay);
+
+        var device = ResolveDevice(_settings.Device);
+        model = model.to(device);
 
         int startEpoch = 1;
         if (_settings.LoadCheckpoint)
@@ -53,8 +52,10 @@ public class TextToMotionModelTrainer(
             return;
         }
 
-        var device = ResolveDevice(_settings.Device);
-        model = model.to(device);
+        var optimizer = optim.AdamW(
+            model.parameters(),
+            lr: _settings.LearningRate,
+            weight_decay: _settings.WeightDecay);
 
         CudaDebugger.PrintDeviceInfo(device);
 
