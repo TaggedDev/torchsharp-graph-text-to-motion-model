@@ -99,8 +99,6 @@ public class ModelCheckpointService(IOptions<TrainingSettings> options)
         TrimList(metricsLog.Epochs, epochCount);
         TrimList(metricsLog.TrainLoss, epochCount);
         TrimList(metricsLog.ValidationLoss, epochCount);
-        TrimList(metricsLog.TrainMetrics, epochCount);
-        TrimList(metricsLog.ValidationMetrics, epochCount);
         TrimList(metricsLog.EpochSeconds, epochCount);
         metricsLog.MotionEvalSnapshots.RemoveAll(s => s.Epoch > epochCount);
     }
