@@ -1,0 +1,15 @@
+{
+  "Training": {
+    "OutputRootPath": "D:\\Code\\CSharp\\text-to-motion\\Weights\\Text2Motion",
+    "LoadCheckpoint": false,
+    "LoadRunNumber": 0,
+    "MaxEpochs": 2,
+    "PrintEveryEpoch": 1,
+    "RandomSeed": 42,
+    "BatchSize": 8,
+    "EvaluationBatchSize": 8,
+    "LearningRate": 0.0001,
+    "WeightDecay": 0.01,
+    "Device": "cuda"
+  }
+}

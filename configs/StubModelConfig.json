@@ -1,0 +1,7 @@
+{
+  "StubModelConfig": {
+    "InputFeatures": 16,
+    "HiddenFeatures": 32,
+    "OutputFeatures": 16
+  }
+}

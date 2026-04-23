@@ -24,13 +24,16 @@
     </ItemGroup>
 
     <ItemGroup>
-        <Content Include="Configs\*.json">
+        <Content Include="configs\*.json">
             <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
         </Content>
     </ItemGroup>
 
     <ItemGroup>
-      <None Update="model-settings.json">
+      <None Update="training-settings.json">
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      </None>
+      <None Update="dataset-settings.json">
         <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       </None>
       <None Update="preprocessing-config.json">

@@ -1,0 +1,14 @@
+{
+  "Dataset": {
+    "FixedFrames": 60,
+    "FeatureDim": 263,
+    "TextEmbeddingDim": 512,
+    "TrainSplitPath": "D:\\Code\\CSharp\\text-to-motion\\dataset\\train.txt",
+    "ValidationSplitPath": "D:\\Code\\CSharp\\text-to-motion\\dataset\\val.txt",
+    "TestSplitPath": "D:\\Code\\CSharp\\text-to-motion\\dataset\\test.txt",
+    "JointsPath": "D:\\Code\\CSharp\\text-to-motion\\dataset\\new_joint_vecs",
+    "EmbeddingsPath": "D:\\Code\\CSharp\\text-to-motion\\dataset\\texts-embeddings",
+    "NormalizationMeanPath": "D:\\Code\\CSharp\\text-to-motion\\dataset\\Mean.npy",
+    "NormalizationStdPath": "D:\\Code\\CSharp\\text-to-motion\\dataset\\Std.npy"
+  }
+}
