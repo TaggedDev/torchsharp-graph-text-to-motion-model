@@ -59,6 +59,13 @@ public class ClipModelOnnxInference
         var embeddings = (output.Value as IEnumerable<float>)?.ToArray()
                          ?? throw new InvalidOperationException("Failed to extract embeddings");
 
+        // L2 normalize the embedding vector
+        float norm = MathF.Sqrt(embeddings.Sum(e => e * e));
+        for (int i = 0; i < embeddings.Length; i++)
+        {
+            embeddings[i] /= norm + 1e-8f;
+        }
+
         return embeddings;
     }
 
