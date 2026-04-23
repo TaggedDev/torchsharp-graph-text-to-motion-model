@@ -292,7 +292,6 @@ public class TextToMotionModelTrainer(
                 : torch.cat([allTextEmb, textEmb], dim: 0);
         }
 
-        float l2Distance = L2DistanceMetric.Compute(allPredicted!, allGroundTruth!);
         float frechetInceptionDistance = FrechetInceptionDistanceMetric.Compute(allGroundTruth!, allPredicted!);
         float diversity = DiversityMetric.Compute(allPredicted!);
         float multimodality = MultimodalityMetric.Compute(allPredicted!, numModalities: 2);
