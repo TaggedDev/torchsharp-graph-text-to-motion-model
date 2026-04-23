@@ -16,6 +16,7 @@ public class TextToMotionModelTrainer(
     HumanML3DDataset dataset)
 {
     private readonly TrainingSettings _settings = trainingOptions.Value;
+    private readonly PerformanceMonitor _perfMonitor = new();
 
     public async Task TrainAsync(CancellationToken token)
     {
@@ -36,10 +37,9 @@ public class TextToMotionModelTrainer(
         Directory.CreateDirectory(resultsPath);
 
         metricsService.Initialize(metricsPath, _settings.LoadCheckpoint);
-        var optimizer = optim.AdamW(
-            model.parameters(),
-            lr: _settings.LearningRate,
-            weight_decay: _settings.WeightDecay);
+
+        var device = ResolveDevice(_settings.Device);
+        model = model.to(device);
 
         int startEpoch = 1;
         if (_settings.LoadCheckpoint)
@@ -52,8 +52,12 @@ public class TextToMotionModelTrainer(
             return;
         }
 
-        var device = ResolveDevice(_settings.Device);
-        model = model.to(device);
+        var optimizer = optim.AdamW(
+            model.parameters(),
+            lr: _settings.LearningRate,
+            weight_decay: _settings.WeightDecay);
+
+        CudaDebugger.PrintDeviceInfo(device);
 
         int totalEpochs = maxEpochs - startEpoch + 1;
         var epochBarOptions = new ProgressBarOptions
@@ -143,6 +147,8 @@ public class TextToMotionModelTrainer(
         Console.WriteLine(
             $"Training finished. Epochs: {metricsService.Log.Epochs.LastOrDefault()}, " +
             $"test loss: {testingMetrics.Loss:F6}, test metric: {testingMetrics.Metric:F6}");
+
+        _perfMonitor.PrintSummary();
     }
 
     private StubEpochMetrics RunEpoch(
@@ -180,16 +186,42 @@ public class TextToMotionModelTrainer(
             using var scope = NewDisposeScope();
 
             var batchIndices = indices.Skip(i).Take(batchSize).ToList();
-            var (textEmb, motionFrames) = dataset.GetBatch(samples, batchIndices, device);
 
+            // Profile: data loading time
+            _perfMonitor.StartTimer("data_load");
+            var (textEmb, motionFrames) = dataset.GetBatch(samples, batchIndices, device);
+            var dataLoadMs = _perfMonitor.EndTimer("data_load");
+
+            // Profile: forward pass
+            _perfMonitor.StartTimer("forward_pass");
             var predicted = model.forward(textEmb);
+            CudaDebugger.SynchronizeGpu();
+            var forwardMs = _perfMonitor.EndTimer("forward_pass");
+
+            // Profile: loss computation
+            _perfMonitor.StartTimer("loss_compute");
             var loss = functional.mse_loss(predicted, motionFrames);
+            var lossMs = _perfMonitor.EndTimer("loss_compute");
 
             if (training && optimizer is not null)
             {
+                // Profile: backward pass
+                _perfMonitor.StartTimer("backward_pass");
                 optimizer.zero_grad();
                 loss.backward();
+                CudaDebugger.SynchronizeGpu();
+                var backwardMs = _perfMonitor.EndTimer("backward_pass");
+
+                // Profile: optimizer step
+                _perfMonitor.StartTimer("optimizer_step");
                 optimizer.step();
+                CudaDebugger.SynchronizeGpu();
+                var stepMs = _perfMonitor.EndTimer("optimizer_step");
+
+                if (numBatches == 0)
+                {
+                    Console.WriteLine($"[TIMING] Batch 1: data={dataLoadMs}ms, fwd={forwardMs}ms, loss={lossMs}ms, bwd={backwardMs}ms, step={stepMs}ms");
+                }
             }
 
             totalLoss += loss.ToSingle();

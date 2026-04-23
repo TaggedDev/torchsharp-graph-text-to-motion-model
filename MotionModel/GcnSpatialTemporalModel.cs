@@ -45,7 +45,7 @@ public sealed class GcnSpatialTemporalModel : Module<Tensor, Tensor>
         _inputProjection2 = Linear(2048, _T * _J * _C);         // 2048 → T*J*C
         _inputNorm = LayerNorm(_T * _J * _C);
 
-        // Build adjacency matrix (not registered as parameter, manually moved to device)
+        // Build adjacency matrix (not registered as parameter, lazy-moved to device)
         var adjFlat = BuildNormalizedAdjacency();
         _adj = from_array(adjFlat).reshape(_J, _J);
 
@@ -69,16 +69,26 @@ public sealed class GcnSpatialTemporalModel : Module<Tensor, Tensor>
         _outputProjection = Linear(_T * _Ct, outputDim);
 
         // Manual registration BEFORE RegisterComponents()
+        // Register input projection components
+        register_module("input_proj_1", _inputProjection1);
+        register_module("input_proj_2", _inputProjection2);
+        register_module("input_norm", _inputNorm);
+        register_module("output_proj", _outputProjection);
+
+        // Register GCN components
+        for (int i = 0; i < _gcnLinears.Count; i++)
+        {
+            register_module($"gclinear_{i}", _gcnLinears[i]);
+            register_module($"gcnorm_{i}", _gcnNorms[i]);
+            register_module($"gcdrop_{i}", _gcnDropouts[i]);
+        }
+
+        // Register temporal components
         for (int i = 0; i < _temporalConvs.Count; i++)
         {
             register_module($"tconv_{i}", _temporalConvs[i]);
             register_module($"tbn_{i}", _temporalBns[i]);
             register_module($"tdrop_{i}", _temporalDropouts[i]);
-        }
-
-        for (int i = 0; i < _gcnDropouts.Count; i++)
-        {
-            register_module($"gcdrop_{i}", _gcnDropouts[i]);
         }
 
         RegisterComponents();
@@ -112,6 +122,8 @@ public sealed class GcnSpatialTemporalModel : Module<Tensor, Tensor>
             h_new = functional.gelu(h_new);
             h_new = _gcnDropouts[i].forward(h_new);
             h = h + h_new;                         // Residual within GCN stack
+            adjBatch.Dispose();
+            adj.Dispose();
         }
 
         x = h.reshape(batchSize, _T, _J, _C);      // (B, T, J, C)
