@@ -3,7 +3,6 @@ namespace Text2Motion.TorchTrainer;
 public class TrainingSettings
 {
     public int MaxEpochs { get; set; } = 100;
-    public int PrintEveryEpoch { get; set; } = 5;
     public int RandomSeed { get; set; } = 42;
     public int BatchSize { get; set; } = 32;
     public int EvaluationBatchSize { get; set; } = 32;

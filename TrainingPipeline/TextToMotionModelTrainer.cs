@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Microsoft.Extensions.Options;
+using ShellProgressBar;
 using Text2Motion.Dataset;
 using TorchSharp;
 using static TorchSharp.torch;
@@ -19,7 +20,6 @@ public class TextToMotionModelTrainer(
     public async Task TrainAsync(CancellationToken token)
     {
         int maxEpochs = Math.Max(1, _settings.MaxEpochs);
-        int printEveryEpoch = Math.Max(1, _settings.PrintEveryEpoch);
 
         SetRandomSeed(_settings.RandomSeed);
         await dataset.LoadAsync();
@@ -55,12 +55,21 @@ public class TextToMotionModelTrainer(
         var device = ResolveDevice(_settings.Device);
         model = model.to(device);
 
+        int totalEpochs = maxEpochs - startEpoch + 1;
+        var epochBarOptions = new ProgressBarOptions
+        {
+            ForegroundColor = ConsoleColor.Cyan,
+            BackgroundColor = ConsoleColor.DarkGray,
+            ProgressCharacter = '─',
+            DisplayTimeInRealTime = false,
+        };
+        using var epochBar = new ProgressBar(totalEpochs, "Training epochs", epochBarOptions);
+
         for (int epoch = startEpoch; epoch <= maxEpochs; epoch++)
         {
             token.ThrowIfCancellationRequested();
 
             var epochTimer = Stopwatch.StartNew();
-            Console.WriteLine($"Epoch {epoch}/{maxEpochs} started.");
 
             model.train();
             var trainingMetrics = RunEpoch(
@@ -69,7 +78,8 @@ public class TextToMotionModelTrainer(
                 optimizer,
                 batchSize: Math.Max(1, _settings.BatchSize),
                 device,
-                training: true);
+                training: true,
+                parentBar: epochBar);
 
             model.eval();
             var validationMetrics = RunEpoch(
@@ -78,7 +88,8 @@ public class TextToMotionModelTrainer(
                 optimizer: null,
                 batchSize: Math.Max(1, _settings.EvaluationBatchSize),
                 device,
-                training: false);
+                training: false,
+                parentBar: epochBar);
 
             var valSnapshot = EvaluateMotionMetrics(
                 model,
@@ -102,12 +113,7 @@ public class TextToMotionModelTrainer(
 
             checkpointService.SaveEpochCheckpoint(checkpointsPath, model, epoch);
 
-            if (epoch % printEveryEpoch == 0 || epoch == 1 || epoch == maxEpochs)
-            {
-                Console.WriteLine(
-                    $"Epoch {epoch}/{maxEpochs} | train loss: {trainingMetrics.Loss:F6} | " +
-                    $"val loss: {validationMetrics.Loss:F6}");
-            }
+            epochBar.Tick($"Epoch {epoch}/{maxEpochs} | train: {trainingMetrics.Loss:F6} | val: {validationMetrics.Loss:F6} | {epochTimer.Elapsed.TotalSeconds:F1}s");
         }
 
         var testingMetrics = RunEpoch(
@@ -145,7 +151,8 @@ public class TextToMotionModelTrainer(
         optim.Optimizer? optimizer,
         int batchSize,
         Device device,
-        bool training)
+        bool training,
+        ProgressBarBase? parentBar = null)
     {
         if (samples.Count == 0)
             return new StubEpochMetrics(0f, 0f);
@@ -156,6 +163,17 @@ public class TextToMotionModelTrainer(
         var indices = Enumerable.Range(0, samples.Count).ToList();
         if (training)
             indices = indices.OrderBy(_ => Random.Shared.Next()).ToList();
+
+        int totalBatches = (int)Math.Ceiling((double)indices.Count / batchSize);
+        string phase = training ? "Train" : "Val/Test";
+        var childOptions = new ProgressBarOptions
+        {
+            ForegroundColor = ConsoleColor.Yellow,
+            BackgroundColor = ConsoleColor.DarkGray,
+            ProgressCharacter = '─',
+            DisplayTimeInRealTime = false,
+        };
+        using var batchBar = parentBar?.Spawn(totalBatches, phase, childOptions);
 
         for (int i = 0; i < indices.Count; i += batchSize)
         {
@@ -176,6 +194,7 @@ public class TextToMotionModelTrainer(
 
             totalLoss += loss.ToSingle();
             numBatches++;
+            batchBar?.Tick($"Batch {numBatches}/{totalBatches} | loss: {loss.ToSingle():F4}");
         }
 
         float avgLoss = numBatches > 0 ? totalLoss / numBatches : 0f;
