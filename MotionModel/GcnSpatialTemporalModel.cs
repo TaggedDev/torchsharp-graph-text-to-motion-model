@@ -45,7 +45,7 @@ public sealed class GcnSpatialTemporalModel : Module<Tensor, Tensor>
         _inputProjection2 = Linear(2048, _T * _J * _C);         // 2048 → T*J*C
         _inputNorm = LayerNorm(_T * _J * _C);
 
-        // Build adjacency matrix (not registered as parameter, manually moved to device)
+        // Build adjacency matrix (not registered as parameter, lazy-moved to device)
         var adjFlat = BuildNormalizedAdjacency();
         _adj = from_array(adjFlat).reshape(_J, _J);
 
@@ -112,6 +112,8 @@ public sealed class GcnSpatialTemporalModel : Module<Tensor, Tensor>
             h_new = functional.gelu(h_new);
             h_new = _gcnDropouts[i].forward(h_new);
             h = h + h_new;                         // Residual within GCN stack
+            adjBatch.Dispose();
+            adj.Dispose();
         }
 
         x = h.reshape(batchSize, _T, _J, _C);      // (B, T, J, C)
