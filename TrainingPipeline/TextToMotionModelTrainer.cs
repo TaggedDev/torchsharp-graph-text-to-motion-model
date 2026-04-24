@@ -12,11 +12,12 @@ public class TextToMotionModelTrainer(
     IOptions<TrainingSettings> trainingOptions,
     ModelCheckpointService checkpointService,
     TrainingMetricsService metricsService,
-    Module<Tensor, Tensor> model,
+    Module<Tensor, Tensor> textToMotionModel,
     HumanML3DDataset dataset)
 {
     private readonly TrainingSettings _settings = trainingOptions.Value;
     private readonly PerformanceMonitor _perfMonitor = new();
+    private Module<Tensor, Tensor> _textToMotionModel = textToMotionModel;
 
     public async Task TrainAsync(CancellationToken token)
     {
@@ -39,11 +40,11 @@ public class TextToMotionModelTrainer(
         metricsService.Initialize(metricsPath, _settings.LoadCheckpoint);
 
         var device = ResolveDevice(_settings.Device);
-        model = model.to(device);
+        _textToMotionModel = _textToMotionModel.to(device);
 
         int startEpoch = 1;
         if (_settings.LoadCheckpoint)
-            startEpoch = checkpointService.RestoreCheckpoint(runDirectoryPath, model, metricsService.Log) + 1;
+            startEpoch = checkpointService.RestoreCheckpoint(runDirectoryPath, _textToMotionModel, metricsService.Log) + 1;
 
         if (startEpoch > maxEpochs)
         {
@@ -53,7 +54,7 @@ public class TextToMotionModelTrainer(
         }
 
         var optimizer = optim.AdamW(
-            model.parameters(),
+            _textToMotionModel.parameters(),
             lr: _settings.LearningRate,
             weight_decay: _settings.WeightDecay);
 
@@ -76,7 +77,7 @@ public class TextToMotionModelTrainer(
             var epochTimer = Stopwatch.StartNew();
 
             var (trainLoss, _) = RunEpoch(
-                model,
+                _textToMotionModel,
                 dataset.Train,
                 optimizer,
                 batchSize: Math.Max(1, _settings.BatchSize),
@@ -84,11 +85,10 @@ public class TextToMotionModelTrainer(
                 training: true,
                 computeMetrics: false,
                 epoch: epoch,
-                phase: MotionEvalPhase.Train,
                 parentBar: epochBar);
             
             var (valLoss, valSnapshot) = RunEpoch(
-                model,
+                _textToMotionModel,
                 dataset.Val,
                 optimizer: null,
                 batchSize: Math.Max(1, _settings.EvaluationBatchSize),
@@ -96,7 +96,6 @@ public class TextToMotionModelTrainer(
                 training: false,
                 computeMetrics: true,
                 epoch: epoch,
-                phase: MotionEvalPhase.Validation,
                 parentBar: epochBar);
 
             epochTimer.Stop();
@@ -111,7 +110,7 @@ public class TextToMotionModelTrainer(
                 continue;
             
             metricsService.RecordMotionMetrics(valSnapshot);
-            checkpointService.SaveEpochCheckpoint(checkpointsPath, model, epoch);
+            checkpointService.SaveEpochCheckpoint(checkpointsPath, _textToMotionModel, epoch);
 
             epochBar.Tick(
                 $"Epoch {epoch}/{maxEpochs} | " +
@@ -127,15 +126,14 @@ public class TextToMotionModelTrainer(
         }
         
         var (testLoss, testSnapshot) = RunEpoch(
-            model,
+            _textToMotionModel,
             dataset.Test,
             optimizer: null,
             batchSize: Math.Max(1, _settings.EvaluationBatchSize),
             device,
             training: false,
             computeMetrics: true,
-            epoch: maxEpochs,
-            phase: MotionEvalPhase.Test);
+            epoch: maxEpochs);
 
         var testMetricsLog = metricsService.CreateTestMetricsLog(
             metricsService.Log.Epochs.LastOrDefault(),
@@ -144,7 +142,7 @@ public class TextToMotionModelTrainer(
         if (testSnapshot != null)
             metricsService.RecordMotionMetrics(testSnapshot);
         
-        checkpointService.SaveFinalArtifacts(runDirectoryPath, testMetricsPath, model, testMetricsLog);
+        checkpointService.SaveFinalArtifacts(runDirectoryPath, testMetricsPath, _textToMotionModel, testMetricsLog);
 
         Console.WriteLine(
             $"Training finished. Epochs: {metricsService.Log.Epochs.LastOrDefault()}, " +
@@ -162,7 +160,6 @@ public class TextToMotionModelTrainer(
         bool training,
         bool computeMetrics = false,
         int epoch = 0,
-        MotionEvalPhase phase = MotionEvalPhase.Validation,
         ProgressBarBase? parentBar = null)
     {
         if (samples.Count == 0)
@@ -315,7 +312,7 @@ public class TextToMotionModelTrainer(
     {
         if (deviceStr.Equals("cuda", StringComparison.OrdinalIgnoreCase) && cuda.is_available())
             return new Device(DeviceType.CUDA, 0);
-        return new Device(DeviceType.CPU, -1);
+        return new Device(DeviceType.CPU);
     }
 
     public sealed record EpochResult(
