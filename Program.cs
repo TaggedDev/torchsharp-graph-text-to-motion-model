@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Options;
 using Text2Motion.ClipModel;
 using Text2Motion.DataPreprocessing;
 using Text2Motion.Dataset;
@@ -39,6 +40,13 @@ using IHost host = Host.CreateDefaultBuilder(args)
 
 var lifetime = host.Services.GetRequiredService<IHostApplicationLifetime>();
 var token = lifetime.ApplicationStopping;
+
+var trainingSettings = host.Services.GetRequiredService<IOptions<TrainingSettings>>().Value;
+string outputRootPath = string.IsNullOrWhiteSpace(trainingSettings.OutputRootPath)
+    ? Path.Combine(AppContext.BaseDirectory, "Weights", "Text2Motion")
+    : Path.GetFullPath(trainingSettings.OutputRootPath);
+_ = MetricsDashboardServer.StartAsync(outputRootPath, port: 5000, token);
+Console.WriteLine("Dashboard: http://localhost:5000");
 
 try
 {

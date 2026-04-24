@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.Json;
 using Microsoft.Extensions.Options;
 using ShellProgressBar;
 using Text2Motion.Dataset;
@@ -18,6 +19,7 @@ public class TextToMotionModelTrainer(
     private readonly PerformanceMonitor _perfMonitor = new();
     private Module<Tensor, Tensor> _textToMotionModel = textToMotionModel;
     private Tensor? _fidProjection;
+    private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 
     public async Task TrainAsync(CancellationToken token)
     {
@@ -36,6 +38,10 @@ public class TextToMotionModelTrainer(
         Directory.CreateDirectory(runDirectoryPath);
         Directory.CreateDirectory(checkpointsPath);
         Directory.CreateDirectory(resultsPath);
+
+        var metricsLog = File.Exists(metricsPath)
+            ? JsonSerializer.Deserialize<TrainerMetricsLog>(File.ReadAllText(metricsPath), JsonOptions) ?? new TrainerMetricsLog()
+            : new TrainerMetricsLog();
 
 
         var device = ResolveDevice(_settings.Device);
@@ -97,13 +103,19 @@ public class TextToMotionModelTrainer(
                 parentBar: epochBar);
 
             epochTimer.Stop();
-            
+
             checkpointService.SaveEpochCheckpoint(checkpointsPath, _textToMotionModel, epoch);
 
             epochBar.Tick(
                 $"Epoch {epoch}/{maxEpochs} | " +
                 $"train: {trainLoss:F6} | val: {valLoss:F6} | " +
                 $"{epochTimer.Elapsed.TotalSeconds:F1}s");
+
+            metricsLog.Epochs.Add(epoch);
+            metricsLog.TrainLoss.Add(trainLoss.Loss);
+            metricsLog.ValidationLoss.Add(valLoss.Loss);
+            metricsLog.EpochSeconds.Add((float)epochTimer.Elapsed.TotalSeconds);
+            File.WriteAllText(metricsPath, JsonSerializer.Serialize(metricsLog, JsonOptions));
         }
         
         var testLoss = RunEpoch(
@@ -113,7 +125,10 @@ public class TextToMotionModelTrainer(
             batchSize: Math.Max(1, _settings.EvaluationBatchSize),
             device: device,
             training: false);
-        
+
+        metricsLog.TestLoss.Add(testLoss.Loss);
+        File.WriteAllText(metricsPath, JsonSerializer.Serialize(metricsLog, JsonOptions));
+
         checkpointService.SaveFinalArtifacts(runDirectoryPath, testMetricsPath, _textToMotionModel);
 
         Console.WriteLine(
