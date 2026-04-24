@@ -26,7 +26,6 @@ using IHost host = Host.CreateDefaultBuilder(args)
         services.AddSingleton<ClipModelOnnxInference>();
         services.AddSingleton<DataPreprocessor>();
         services.AddSingleton<ModelCheckpointService>();
-        services.AddSingleton<TrainingMetricsService>();
         services.AddMotionModel<GcnSpatialTemporalModel, GcnSpatialTemporalConfig>(configuration);
         services.AddSingleton<HumanML3DDataset>();
         services.AddSingleton<TextToMotionModelTrainer>();

@@ -7,5 +7,4 @@ public class TrainerMetricsLog
     public List<float> ValidationLoss { get; set; } = [];
     public List<float> TestLoss { get; set; } = [];
     public List<float> EpochSeconds { get; set; } = [];
-    public List<MotionEvalSnapshot> MotionEvalSnapshots { get; set; } = [];
 }

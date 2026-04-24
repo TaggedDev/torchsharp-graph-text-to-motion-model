@@ -34,7 +34,7 @@ public class ModelCheckpointService(IOptions<TrainingSettings> options)
     }
 
     public void SaveFinalArtifacts(string runDirectoryPath, string testMetricsPath,
-        Module<Tensor, Tensor> model, TrainerMetricsLog testMetrics)
+        Module<Tensor, Tensor> model)
     {
         var checkpoint = new CheckpointMetadata
         {
@@ -48,11 +48,9 @@ public class ModelCheckpointService(IOptions<TrainingSettings> options)
 
         model.save(modelPath);
         File.WriteAllText(metadataPath, JsonSerializer.Serialize(checkpoint, JsonOptions));
-        File.WriteAllText(testMetricsPath, JsonSerializer.Serialize(testMetrics, JsonOptions));
     }
 
-    public int RestoreCheckpoint(string runDirectoryPath, Module<Tensor, Tensor> model,
-        TrainerMetricsLog metricsLog)
+    public int RestoreCheckpoint(string runDirectoryPath, Module<Tensor, Tensor> model)
     {
         string checkpointsPath = Path.Combine(runDirectoryPath, "checkpoints");
         if (!Directory.Exists(checkpointsPath))
@@ -76,12 +74,11 @@ public class ModelCheckpointService(IOptions<TrainingSettings> options)
             throw new InvalidOperationException($"Checkpoint metadata does not exist: {metadataPath}");
 
         model.load(modelPath);
-        var checkpoint = JsonSerializer.Deserialize<CheckpointMetadata>(File.ReadAllText(metadataPath), JsonOptions)
+        _ = JsonSerializer.Deserialize<CheckpointMetadata>(File.ReadAllText(metadataPath), JsonOptions)
             ?? throw new InvalidOperationException($"Checkpoint metadata is invalid: {metadataPath}");
 
-        TrimMetricsToEpoch(metricsLog, latestEpoch);
 
-        Console.WriteLine($"Resumed training from Run-{Path.GetFileName(runDirectoryPath)?.Split('-').Last()} epoch {latestEpoch:0000}.");
+        Console.WriteLine($"Resumed training from Run-{Path.GetFileName(runDirectoryPath).Split('-').Last()} epoch {latestEpoch:0000}.");
         return latestEpoch;
     }
 
@@ -92,21 +89,6 @@ public class ModelCheckpointService(IOptions<TrainingSettings> options)
 
         var match = CheckpointRegex.Match(fileName);
         return match.Success && int.TryParse(match.Groups[1].Value, out int epoch) ? epoch : null;
-    }
-
-    private static void TrimMetricsToEpoch(TrainerMetricsLog metricsLog, int epochCount)
-    {
-        TrimList(metricsLog.Epochs, epochCount);
-        TrimList(metricsLog.TrainLoss, epochCount);
-        TrimList(metricsLog.ValidationLoss, epochCount);
-        TrimList(metricsLog.EpochSeconds, epochCount);
-        metricsLog.MotionEvalSnapshots.RemoveAll(s => s.Epoch > epochCount);
-    }
-
-    private static void TrimList<T>(List<T> values, int count)
-    {
-        if (values.Count > count)
-            values.RemoveRange(count, values.Count - count);
     }
 
     private sealed class CheckpointMetadata

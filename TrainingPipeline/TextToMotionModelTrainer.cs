@@ -11,7 +11,6 @@ namespace Text2Motion.TorchTrainer;
 public class TextToMotionModelTrainer(
     IOptions<TrainingSettings> trainingOptions,
     ModelCheckpointService checkpointService,
-    TrainingMetricsService metricsService,
     Module<Tensor, Tensor> textToMotionModel,
     HumanML3DDataset dataset)
 {
@@ -38,14 +37,13 @@ public class TextToMotionModelTrainer(
         Directory.CreateDirectory(checkpointsPath);
         Directory.CreateDirectory(resultsPath);
 
-        metricsService.Initialize(metricsPath, _settings.LoadCheckpoint);
 
         var device = ResolveDevice(_settings.Device);
         _textToMotionModel = _textToMotionModel.to(device);
 
         int startEpoch = 1;
         if (_settings.LoadCheckpoint)
-            startEpoch = checkpointService.RestoreCheckpoint(runDirectoryPath, _textToMotionModel, metricsService.Log) + 1;
+            startEpoch = checkpointService.RestoreCheckpoint(runDirectoryPath, _textToMotionModel) + 1;
 
         if (startEpoch > maxEpochs)
         {
@@ -80,95 +78,62 @@ public class TextToMotionModelTrainer(
 
             var epochTimer = Stopwatch.StartNew();
 
-            var (trainLoss, _) = RunEpoch(
+            var trainLoss = RunEpoch(
                 _textToMotionModel,
                 dataset.Train,
                 optimizer,
                 batchSize: Math.Max(1, _settings.BatchSize),
-                device,
+                device: device,
                 training: true,
-                computeMetrics: false,
-                epoch: epoch,
                 parentBar: epochBar);
             
-            var (valLoss, valSnapshot) = RunEpoch(
+            var valLoss = RunEpoch(
                 _textToMotionModel,
                 dataset.Val,
                 optimizer: null,
                 batchSize: Math.Max(1, _settings.EvaluationBatchSize),
-                device,
+                device: device,
                 training: false,
-                computeMetrics: true,
-                epoch: epoch,
                 parentBar: epochBar);
 
             epochTimer.Stop();
-
-            metricsService.RecordEpoch(
-                epoch,
-                trainLoss,
-                valLoss,
-                (float)epochTimer.Elapsed.TotalSeconds);
-
-            if (valSnapshot == null)
-                continue;
             
-            metricsService.RecordMotionMetrics(valSnapshot);
             checkpointService.SaveEpochCheckpoint(checkpointsPath, _textToMotionModel, epoch);
 
             epochBar.Tick(
                 $"Epoch {epoch}/{maxEpochs} | " +
                 $"train: {trainLoss:F6} | val: {valLoss:F6} | " +
-                $"FID: {valSnapshot.FrechetInceptionDistance:F4} | " +
-                $"MM: {valSnapshot.Multimodality:F4} | " +
-                $"MM Dist: {valSnapshot.MultimodalDistance:F4} | " +
-                $"R@1: {valSnapshot.RPrecisionTop1:F4} | " +
-                $"R@2: {valSnapshot.RPrecisionTop2:F4} | " +
-                $"R@3: {valSnapshot.RPrecisionTop3:F4} | " +
-                $"Div: {valSnapshot.Diversity:F4} | " +
                 $"{epochTimer.Elapsed.TotalSeconds:F1}s");
         }
         
-        var (testLoss, testSnapshot) = RunEpoch(
+        var testLoss = RunEpoch(
             _textToMotionModel,
             dataset.Test,
             optimizer: null,
             batchSize: Math.Max(1, _settings.EvaluationBatchSize),
-            device,
-            training: false,
-            computeMetrics: true,
-            epoch: maxEpochs);
-
-        var testMetricsLog = metricsService.CreateTestMetricsLog(
-            metricsService.Log.Epochs.LastOrDefault(),
-            testLoss);
-
-        if (testSnapshot != null)
-            metricsService.RecordMotionMetrics(testSnapshot);
+            device: device,
+            training: false);
         
-        checkpointService.SaveFinalArtifacts(runDirectoryPath, testMetricsPath, _textToMotionModel, testMetricsLog);
+        checkpointService.SaveFinalArtifacts(runDirectoryPath, testMetricsPath, _textToMotionModel);
 
         Console.WriteLine(
-            $"Training finished. Epochs: {metricsService.Log.Epochs.LastOrDefault()}, " +
+            $"Training finished. Epochs: {maxEpochs}, " +
             $"test loss: {testLoss:F6}");
 
         _perfMonitor.PrintSummary();
         _fidProjection?.Dispose();
     }
 
-    private EpochResult RunEpoch(
-        Module<Tensor, Tensor> model,
+    private EpochResult RunEpoch(Module<Tensor, Tensor> model,
         IReadOnlyList<MotionSample> samples,
         optim.Optimizer? optimizer,
         int batchSize,
         Device device,
         bool training,
-        bool computeMetrics = false,
-        int epoch = 0,
         ProgressBarBase? parentBar = null)
     {
         if (samples.Count == 0)
-            return new EpochResult(0f, null);
+            return new EpochResult(0f);
 
         float totalLoss = 0f;
         int numBatches = 0;
@@ -194,9 +159,6 @@ public class TextToMotionModelTrainer(
         using var noGradGuard = training ? null : torch.no_grad();
 
         // metric accumulators
-        WelfordCovarianceAccumulator? realAcc = computeMetrics ? new() : null;
-        WelfordCovarianceAccumulator? genAcc = computeMetrics ? new() : null;
-        var diversityReservoir = computeMetrics ? new List<Tensor>() : null;
         int diversitySeen = 0;
 
         for (int i = 0; i < indices.Count; i += batchSize)
@@ -216,73 +178,14 @@ public class TextToMotionModelTrainer(
                 loss.backward();
                 optimizer.step();
             }
-
-            if (computeMetrics)
-            {
-                using var proj = _fidProjection!.to(device);
-                using var projG = predicted.detach().mm(proj);
-                genAcc!.Update(projG);
-
-                using var projR = motionFrames.detach().mm(proj);
-                realAcc!.Update(projR);
-
-                int B = (int)predicted.shape[0];
-                for (int s = 0; s < B; s++)
-                {
-                    diversitySeen++;
-                    if (diversityReservoir!.Count < 300)
-                        diversityReservoir.Add(predicted[s].detach().cpu());
-                    else
-                    {
-                        int j = Random.Shared.Next(diversitySeen);
-                        if (j < 300)
-                            diversityReservoir[j] = predicted[s].detach().cpu();
-                    }
-                }
-            }
-
+            
             totalLoss += loss.ToSingle();
             numBatches++;
             batchBar?.Tick($"Batch {numBatches}/{totalBatches} | loss: {loss.ToSingle():F4}");
         }
 
         float avgLoss = numBatches > 0 ? totalLoss / numBatches : 0f;
-
-        if (!computeMetrics)
-            return new EpochResult(avgLoss, null);
-
-        using var metricScope = NewDisposeScope();
-
-        var (muR, sigmaR) = realAcc!.Finalize();
-        var (muG, sigmaG) = genAcc!.Finalize();
-
-        float frechetInceptionDistance = FrechetInceptionDistanceMetric.Compute(muR, sigmaR, muG, sigmaG);
-
-        var diversityTensor = torch.stack(diversityReservoir!.ToArray(), dim: 0);
-        float diversity = DiversityMetric.Compute(diversityTensor);
-
-        float multimodality = MultimodalityMetric.Compute(null, numModalities: 2);
-        float rPrecisionTop1 = RPrecisionMetric.Compute(null, null, topK: 1);
-        float rPrecisionTop2 = RPrecisionMetric.Compute(null, null, topK: 2);
-        float rPrecisionTop3 = RPrecisionMetric.Compute(null, null, topK: 3);
-        float multimodalDistance = MultimodalDistanceMetric.Compute(null, null);
-
-        var snapshot = new MotionEvalSnapshot(
-            epoch,
-            frechetInceptionDistance,
-            diversity,
-            multimodality,
-            rPrecisionTop1,
-            rPrecisionTop2,
-            rPrecisionTop3,
-            multimodalDistance);
-
-        realAcc?.Dispose();
-        genAcc?.Dispose();
-        foreach (var t in diversityReservoir ?? new List<Tensor>())
-            t.Dispose();
-
-        return new EpochResult(avgLoss, snapshot);
+        return new EpochResult(avgLoss);
     }
 
     private static string ResolveOutputRootPath(TrainingSettings settings)
@@ -345,8 +248,7 @@ public class TextToMotionModelTrainer(
     }
 
     public sealed record EpochResult(
-        float Loss,
-        MotionEvalSnapshot? Metrics
+        float Loss
     );
 
 }
