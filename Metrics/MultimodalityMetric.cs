@@ -11,6 +11,6 @@ public class MultimodalityMetric
     // Paper uses K=30 generations per prompt across 100 prompts.
     // Not computable here: EvaluateMotionMetrics generates exactly one motion per sample.
     // Returns 0 until the inference loop generates numModalities motions per prompt.
-    public static float Compute(Tensor motionFeatures, int numModalities) 
+    public static float Compute(Tensor? motionFeatures, int numModalities)
         => 0f;
 }
