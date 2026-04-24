@@ -266,9 +266,9 @@ public class TextToMotionModelTrainer(
         model.eval();
         using var noGradGuard = torch.no_grad();
 
-        Tensor? allPredicted = null;
-        Tensor? allGroundTruth = null;
-        Tensor? allTextEmb = null;
+        var predictedList = new List<Tensor>();
+        var groundTruthList = new List<Tensor>();
+        var textEmbList = new List<Tensor>();
 
         var indices = Enumerable.Range(0, samples.Count).ToList();
 
@@ -279,19 +279,15 @@ public class TextToMotionModelTrainer(
 
             var predicted = model.forward(textEmb);
 
-            allPredicted = allPredicted is null
-                ? predicted.clone()
-                : torch.cat([allPredicted, predicted], dim: 0);
-
-            allGroundTruth = allGroundTruth is null
-                ? motionFrames.clone()
-                : torch.cat([allGroundTruth, motionFrames], dim: 0);
-
-            allTextEmb = allTextEmb is null
-                ? textEmb.clone()
-                : torch.cat([allTextEmb, textEmb], dim: 0);
+            predictedList.Add(predicted.detach());
+            groundTruthList.Add(motionFrames.detach());
+            textEmbList.Add(textEmb.detach());
         }
 
+        var allPredicted = torch.cat(predictedList.ToArray(), dim: 0);
+        var allGroundTruth = torch.cat(groundTruthList.ToArray(), dim: 0);
+        var allTextEmb = torch.cat(textEmbList.ToArray(), dim: 0);
+        
         float frechetInceptionDistance = FrechetInceptionDistanceMetric.Compute(allGroundTruth!, allPredicted!);
         float diversity = DiversityMetric.Compute(allPredicted!);
         float multimodality = MultimodalityMetric.Compute(allPredicted!, numModalities: 2);
