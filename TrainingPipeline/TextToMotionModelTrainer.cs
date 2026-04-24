@@ -195,8 +195,6 @@ public class TextToMotionModelTrainer(
 
         for (int i = 0; i < indices.Count; i += batchSize)
         {
-            using var scope = NewDisposeScope();
-
             var batchIndices = indices.Skip(i).Take(batchSize).ToList();
 
             var (textEmb, motionFrames) = dataset.GetBatch(samples, batchIndices, device);
@@ -207,6 +205,7 @@ public class TextToMotionModelTrainer(
 
             if (training && optimizer is not null)
             {
+                using var scope = NewDisposeScope();
                 optimizer.zero_grad();
                 loss.backward();
                 optimizer.step();
