@@ -67,7 +67,7 @@ internal static class MetricsDashboardServer
             const layout = {
               paper_bgcolor: '#1e1e1e', plot_bgcolor: '#2a2a2a',
               font: { color: '#ccc' },
-              xaxis: { title: 'Epoch', gridcolor: '#444' },
+              xaxis: { title: 'Epoch', gridcolor: '#444', dtick: 1 },
               yaxis: { title: 'Loss', gridcolor: '#444' },
               legend: { orientation: 'h', y: -0.15 },
               margin: { t: 20, r: 20, b: 60, l: 60 }
