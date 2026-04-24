@@ -45,7 +45,7 @@ var trainingSettings = host.Services.GetRequiredService<IOptions<TrainingSetting
 string outputRootPath = string.IsNullOrWhiteSpace(trainingSettings.OutputRootPath)
     ? Path.Combine(AppContext.BaseDirectory, "Weights", "Text2Motion")
     : Path.GetFullPath(trainingSettings.OutputRootPath);
-_ = MetricsDashboardServer.StartAsync(outputRootPath, port: 5000, token);
+_ = MetricsDashboardServer.StartAsync(outputRootPath, port: 5000);
 Console.WriteLine("Dashboard: http://localhost:5000");
 
 try
@@ -63,3 +63,6 @@ catch (Exception ex)
 {
     Console.WriteLine($"Fatal error: {ex}");
 }
+
+Console.WriteLine("Training complete. Dashboard still running at http://localhost:5000 (press Ctrl+C to exit).");
+await Task.Delay(Timeout.Infinite, token);

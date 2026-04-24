@@ -7,7 +7,7 @@ namespace Text2Motion.TorchTrainer;
 
 internal static class MetricsDashboardServer
 {
-    public static Task StartAsync(string outputRootPath, int port, CancellationToken token)
+    public static Task StartAsync(string outputRootPath, int port)
     {
         return Task.Run(async () =>
         {
@@ -33,9 +33,8 @@ internal static class MetricsDashboardServer
                 }
             });
 
-            using var registration = token.Register(() => app.StopAsync().GetAwaiter().GetResult());
             await app.RunAsync();
-        }, token);
+        });
     }
 
     private static string? FindLatestMetricsPath(string outputRootPath)
