@@ -23,28 +23,23 @@ public class TrainingMetricsService
     public void RecordEpoch(
         int epoch,
         float trainLoss,
-        float trainMetric,
         float valLoss,
-        float valMetric,
         float elapsedSeconds)
     {
         _log.Epochs.Add(epoch);
         _log.TrainLoss.Add(trainLoss);
-        _log.TrainMetrics.Add(trainMetric);
         _log.ValidationLoss.Add(valLoss);
-        _log.ValidationMetrics.Add(valMetric);
         _log.EpochSeconds.Add(elapsedSeconds);
 
         File.WriteAllText(_metricsPath, JsonSerializer.Serialize(_log, JsonOptions));
     }
 
-    public TrainerMetricsLog CreateTestMetricsLog(int completedEpochs, float testLoss, float testMetric)
+    public TrainerMetricsLog CreateTestMetricsLog(int completedEpochs, float testLoss)
     {
         return new TrainerMetricsLog
         {
             Epochs = [completedEpochs],
-            TestLoss = [testLoss],
-            TestMetrics = [testMetric]
+            TestLoss = [testLoss]
         };
     }
 
