@@ -15,31 +15,9 @@ public class FrechetInceptionDistanceMetric
     //   Tr(sqrtm(Σ_r·Σ_g)) = Σ_i sqrt(λ_i(M))  where M = Σ_r^½ · Σ_g · Σ_r^½
     // This uses the identity Tr(sqrtm(AB)) = Tr(sqrtm(A^½·B·A^½)) for SPD matrices A, B.
     // Σ_r^½ is computed via symmetric eigendecomposition: Σ = Q·Λ·Q^T → Σ^½ = Q·sqrt(Λ)·Q^T
-    public static float Compute(Tensor realFeatures, Tensor generatedFeatures)
+    public static float Compute(Tensor muR, Tensor sigmaR, Tensor muG, Tensor sigmaG)
     {
         using var scope = NewDisposeScope();
-
-        long nR = realFeatures.shape[0];
-        long nG = generatedFeatures.shape[0];
-        if (nR < 2 || nG < 2)
-            return float.NaN;
-
-        // CPU + float64 for numerical stability of covariance and eigendecomposition
-        var r = realFeatures.cpu().to(ScalarType.Float64);
-        var g = generatedFeatures.cpu().to(ScalarType.Float64);
-
-        var muR = r.mean(new long[] { 0 });     // (D,)
-        var muG = g.mean(new long[] { 0 });     // (D,)
-
-        // Sample covariance Σ = X_centered^T · X_centered / (N−1),  shape (D, D)
-        var sigmaR = (r - muR).T.mm(r - muR) / (nR - 1);
-        var sigmaG = (g - muG).T.mm(g - muG) / (nG - 1);
-
-        // Add ε·I: prevents near-singularity when N << D (few samples vs feature dimension)
-        long D = sigmaR.shape[0];
-        var epsI = eye(D, dtype: ScalarType.Float64) * 1e-6;
-        sigmaR = sigmaR + epsI;
-        sigmaG = sigmaG + epsI;
 
         // ||μ_r − μ_g||²
         var muDiff = muR - muG;

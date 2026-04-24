@@ -13,6 +13,6 @@ public class MultimodalDistanceMetric
     // Requires motion and text features in a SHARED 512-dim co-embedding space produced by
     // a pretrained contrastive encoder (MotionEncoderBiGRUCo + TextEncoderBiGRUCo).
     // Raw model outputs and CLIP text embeddings are in different spaces — L2 is undefined.
-    public static float Compute(Tensor motionFeatures, Tensor textFeatures)
+    public static float Compute(Tensor? motionFeatures, Tensor? textFeatures)
         => 0f;
 }

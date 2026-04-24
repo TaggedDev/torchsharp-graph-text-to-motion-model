@@ -18,6 +18,7 @@ public class TextToMotionModelTrainer(
     private readonly TrainingSettings _settings = trainingOptions.Value;
     private readonly PerformanceMonitor _perfMonitor = new();
     private Module<Tensor, Tensor> _textToMotionModel = textToMotionModel;
+    private Tensor? _fidProjection;
 
     public async Task TrainAsync(CancellationToken token)
     {
@@ -57,6 +58,9 @@ public class TextToMotionModelTrainer(
             _textToMotionModel.parameters(),
             lr: _settings.LearningRate,
             weight_decay: _settings.WeightDecay);
+
+        int outputDim = 15780;
+        _fidProjection = torch.randn(outputDim, 512) / MathF.Sqrt(512);
 
         CudaDebugger.PrintDeviceInfo(device);
 
@@ -149,6 +153,7 @@ public class TextToMotionModelTrainer(
             $"test loss: {testLoss:F6}");
 
         _perfMonitor.PrintSummary();
+        _fidProjection?.Dispose();
     }
 
     private EpochResult RunEpoch(
@@ -188,10 +193,11 @@ public class TextToMotionModelTrainer(
         model.train(training);
         using var noGradGuard = training ? null : torch.no_grad();
 
-        // metric buffers
-        var predictedList = computeMetrics ? new List<Tensor>() : null;
-        var groundTruthList = computeMetrics ? new List<Tensor>() : null;
-        var textEmbList = computeMetrics ? new List<Tensor>() : null;
+        // metric accumulators
+        WelfordCovarianceAccumulator? realAcc = computeMetrics ? new() : null;
+        WelfordCovarianceAccumulator? genAcc = computeMetrics ? new() : null;
+        var diversityReservoir = computeMetrics ? new List<Tensor>() : null;
+        int diversitySeen = 0;
 
         for (int i = 0; i < indices.Count; i += batchSize)
         {
@@ -213,9 +219,26 @@ public class TextToMotionModelTrainer(
 
             if (computeMetrics)
             {
-                predictedList!.Add(predicted.detach());
-                groundTruthList!.Add(motionFrames.detach());
-                textEmbList!.Add(textEmb.detach());
+                using var proj = _fidProjection!.to(device);
+                using var projG = predicted.detach().mm(proj);
+                genAcc!.Update(projG);
+
+                using var projR = motionFrames.detach().mm(proj);
+                realAcc!.Update(projR);
+
+                int B = (int)predicted.shape[0];
+                for (int s = 0; s < B; s++)
+                {
+                    diversitySeen++;
+                    if (diversityReservoir!.Count < 300)
+                        diversityReservoir.Add(predicted[s].detach().cpu());
+                    else
+                    {
+                        int j = Random.Shared.Next(diversitySeen);
+                        if (j < 300)
+                            diversityReservoir[j] = predicted[s].detach().cpu();
+                    }
+                }
             }
 
             totalLoss += loss.ToSingle();
@@ -230,17 +253,19 @@ public class TextToMotionModelTrainer(
 
         using var metricScope = NewDisposeScope();
 
-        var allPredicted = torch.cat(predictedList!.ToArray(), dim: 0);
-        var allGroundTruth = torch.cat(groundTruthList!.ToArray(), dim: 0);
-        var allTextEmb = torch.cat(textEmbList!.ToArray(), dim: 0);
+        var (muR, sigmaR) = realAcc!.Finalize();
+        var (muG, sigmaG) = genAcc!.Finalize();
 
-        float frechetInceptionDistance = FrechetInceptionDistanceMetric.Compute(allGroundTruth, allPredicted);
-        float diversity = DiversityMetric.Compute(allPredicted);
-        float multimodality = MultimodalityMetric.Compute(allPredicted, numModalities: 2);
-        float rPrecisionTop1 = RPrecisionMetric.Compute(allPredicted, allTextEmb, topK: 1);
-        float rPrecisionTop2 = RPrecisionMetric.Compute(allPredicted, allTextEmb, topK: 2);
-        float rPrecisionTop3 = RPrecisionMetric.Compute(allPredicted, allTextEmb, topK: 3);
-        float multimodalDistance = MultimodalDistanceMetric.Compute(allPredicted, allTextEmb);
+        float frechetInceptionDistance = FrechetInceptionDistanceMetric.Compute(muR, sigmaR, muG, sigmaG);
+
+        var diversityTensor = torch.stack(diversityReservoir!.ToArray(), dim: 0);
+        float diversity = DiversityMetric.Compute(diversityTensor);
+
+        float multimodality = MultimodalityMetric.Compute(null, numModalities: 2);
+        float rPrecisionTop1 = RPrecisionMetric.Compute(null, null, topK: 1);
+        float rPrecisionTop2 = RPrecisionMetric.Compute(null, null, topK: 2);
+        float rPrecisionTop3 = RPrecisionMetric.Compute(null, null, topK: 3);
+        float multimodalDistance = MultimodalDistanceMetric.Compute(null, null);
 
         var snapshot = new MotionEvalSnapshot(
             epoch,
@@ -251,6 +276,11 @@ public class TextToMotionModelTrainer(
             rPrecisionTop2,
             rPrecisionTop3,
             multimodalDistance);
+
+        realAcc?.Dispose();
+        genAcc?.Dispose();
+        foreach (var t in diversityReservoir ?? new List<Tensor>())
+            t.Dispose();
 
         return new EpochResult(avgLoss, snapshot);
     }
