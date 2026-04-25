@@ -18,7 +18,6 @@ public class TextToMotionModelTrainer(
     private readonly TrainingSettings _settings = trainingOptions.Value;
     private readonly PerformanceMonitor _perfMonitor = new();
     private Module<Tensor, Tensor> _textToMotionModel = textToMotionModel;
-    private Tensor? _fidProjection;
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 
     public async Task TrainAsync(CancellationToken token)
@@ -62,9 +61,6 @@ public class TextToMotionModelTrainer(
             _textToMotionModel.parameters(),
             lr: _settings.LearningRate,
             weight_decay: _settings.WeightDecay);
-
-        int outputDim = 15780;
-        _fidProjection = torch.randn(outputDim, 512) / MathF.Sqrt(512);
 
         CudaDebugger.PrintDeviceInfo(device);
 
@@ -136,7 +132,6 @@ public class TextToMotionModelTrainer(
             $"test loss: {testLoss:F6}");
 
         _perfMonitor.PrintSummary();
-        _fidProjection?.Dispose();
     }
 
     private EpochResult RunEpoch(Module<Tensor, Tensor> model,
@@ -173,30 +168,34 @@ public class TextToMotionModelTrainer(
         model.train(training);
         using var noGradGuard = training ? null : torch.no_grad();
 
-        // metric accumulators
-        int diversitySeen = 0;
-
         for (int i = 0; i < indices.Count; i += batchSize)
         {
-            var batchIndices = indices.Skip(i).Take(batchSize).ToList();
-
-            var (textEmb, motionFrames) = dataset.GetBatch(samples, batchIndices, device);
-
-            var predicted = model.forward(textEmb);
-
-            var loss = functional.mse_loss(predicted, motionFrames);
-
-            if (training && optimizer is not null)
+            // Wrap entire batch computation in DisposeScope to prevent GPU memory accumulation
+            using var scope = NewDisposeScope();
             {
-                using var scope = NewDisposeScope();
-                optimizer.zero_grad();
-                loss.backward();
-                optimizer.step();
+                var batchIndices = indices.Skip(i).Take(batchSize).ToList();
+
+                var (textEmb, motionFrames) = dataset.GetBatch(samples, batchIndices, device);
+
+                var predicted = model.forward(textEmb);
+
+                var loss = functional.mse_loss(predicted, motionFrames);
+
+                if (training && optimizer is not null)
+                {
+                    optimizer.zero_grad();
+                    loss.backward();
+
+                    // Manual gradient clipping to prevent explosion during early training
+                    ClipGradients(model, maxNorm: 1.0f);
+
+                    optimizer.step();
+                }
+
+                totalLoss += loss.ToSingle();
+                numBatches++;
+                batchBar?.Tick($"Batch {numBatches}/{totalBatches} | loss: {loss.ToSingle():F4}");
             }
-            
-            totalLoss += loss.ToSingle();
-            numBatches++;
-            batchBar?.Tick($"Batch {numBatches}/{totalBatches} | loss: {loss.ToSingle():F4}");
         }
 
         float avgLoss = numBatches > 0 ? totalLoss / numBatches : 0f;
@@ -260,6 +259,32 @@ public class TextToMotionModelTrainer(
         if (deviceStr.Equals("cuda", StringComparison.OrdinalIgnoreCase) && cuda.is_available())
             return new Device(DeviceType.CUDA, 0);
         return new Device(DeviceType.CPU);
+    }
+
+    private static void ClipGradients(Module<Tensor, Tensor> model, float maxNorm)
+    {
+        float totalNorm = 0f;
+        foreach (var param in model.parameters())
+        {
+            if (param.grad is not null)
+            {
+                var grad = param.grad;
+                totalNorm += (grad * grad).sum().item<float>();
+            }
+        }
+        totalNorm = MathF.Sqrt(totalNorm);
+
+        if (totalNorm > maxNorm && totalNorm > 1e-8f)
+        {
+            float clipCoef = maxNorm / totalNorm;
+            foreach (var param in model.parameters())
+            {
+                if (param.grad is not null)
+                {
+                    param.grad = param.grad * clipCoef;
+                }
+            }
+        }
     }
 
     public sealed record EpochResult(

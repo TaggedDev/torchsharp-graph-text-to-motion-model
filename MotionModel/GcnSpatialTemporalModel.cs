@@ -107,6 +107,9 @@ public sealed class GcnSpatialTemporalModel : Module<Tensor, Tensor>
         x = x.reshape(-1, _T, _J, _C);             // (B, T, J, C)
 
         // Step 2: Spatial GCN Block (shared weights across time, no inter-frame residual)
+        // GCN applies graph convolution with fixed skeleton adjacency matrix (anatomical inductive bias).
+        // Each frame is processed independently (shared weights across time T),
+        // aggregating information from neighboring joints based on skeleton connectivity.
         var batchSize = x.shape[0];
         x = x.reshape(batchSize * _T, _J, _C);     // (B*T, J, C)
 
@@ -114,6 +117,8 @@ public sealed class GcnSpatialTemporalModel : Module<Tensor, Tensor>
         for (int i = 0; i < _gcnLinears.Count; i++)
         {
             // Batched GCN aggregation: (1, J, J) @ (B*T, J, C) → (B*T, J, C)
+            // H^(l+1) = σ(D^(-1/2) A D^(-1/2) H^(l) W^(l))
+            // where A is the skeleton adjacency matrix (anatomically meaningful connections)
             var adj = _adj.to(x.device);
             var adjBatch = adj.unsqueeze(0);
             var agg = matmul(adjBatch, h);         // Graph aggregation
@@ -129,10 +134,16 @@ public sealed class GcnSpatialTemporalModel : Module<Tensor, Tensor>
         x = h.reshape(batchSize, _T, _J, _C);      // (B, T, J, C)
 
         // Step 3: Prepare for Temporal Conv1d
-        x = x.reshape(batchSize, _T, _J * _C);     // (B, T, Ct)
+        // Reshape from per-frame (T, J, C) to temporal sequence format (Ct, T)
+        // After spatial GCN, structured pose representations are concatenated across joints.
+        x = x.reshape(batchSize, _T, _J * _C);     // (B, T, Ct) where Ct = J*C
         x = x.permute(0, 2, 1);                    // (B, Ct, T) — Conv1d format
 
         // Step 4: Temporal Conv1d Block
+        // Conv1d with kernel=3 models local temporal dependencies (velocity consistency).
+        // This adds motion dynamics: neighboring frames influence each other,
+        // preventing physically implausible frame-to-frame discontinuities.
+        // Applies after spatial GCN so already-structured poses are linked through time.
         for (int i = 0; i < _temporalConvs.Count; i++)
         {
             var residual = x;
@@ -140,7 +151,7 @@ public sealed class GcnSpatialTemporalModel : Module<Tensor, Tensor>
             x = _temporalBns[i].forward(x);
             x = functional.relu(x);
             x = _temporalDropouts[i].forward(x);
-            x = x + residual;                      // Temporal residual
+            x += residual;                      // Temporal residual connection
         }
 
         // Step 5: Output projection

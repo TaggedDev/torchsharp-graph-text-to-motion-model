@@ -3,7 +3,7 @@
     "OutputRootPath": "D:\\Code\\CSharp\\text-to-motion\\Weights\\Text2Motion",
     "LoadCheckpoint": false,
     "LoadRunNumber": 0,
-    "MaxEpochs": 2,
+    "MaxEpochs": 25,
     "PrintEveryEpoch": 1,
     "RandomSeed": 42,
     "BatchSize": 64,
