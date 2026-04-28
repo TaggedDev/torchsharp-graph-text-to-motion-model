@@ -7,8 +7,8 @@ namespace Text2Motion.TorchTrainer;
 
 public sealed class GcnSpatialTemporalModel : Module<Tensor, Tensor>
 {
-    private readonly Linear _inputProjection1;
-    private readonly Linear _inputProjection2;
+    private readonly Linear _textToInitial;
+    private readonly Linear _textTemporalEmbed;
     private readonly LayerNorm _inputNorm;
 
     private readonly List<Linear> _gcnLinears = new();
@@ -16,14 +16,16 @@ public sealed class GcnSpatialTemporalModel : Module<Tensor, Tensor>
     private readonly List<Dropout> _gcnDropouts = new();
 
     private readonly List<Conv1d> _temporalConvs = new();
-    private readonly List<BatchNorm1d> _temporalBns = new();
+    private readonly List<LayerNorm> _temporalNorms = new();
     private readonly List<Dropout> _temporalDropouts = new();
 
-    private readonly Linear _outputProjection;
+    private readonly Linear _rootHead;
+    private readonly Linear _poseHead;
 
     private Tensor _adj;
+    private Tensor _posEncoding;
 
-    private readonly int _T, _J, _C, _Ct;
+    private readonly int _T, _J, _C, _Ct, _textDim;
 
     public GcnSpatialTemporalModel(
         IOptions<GcnSpatialTemporalConfig> config,
@@ -33,23 +35,27 @@ public sealed class GcnSpatialTemporalModel : Module<Tensor, Tensor>
         var cfg = config.Value;
         var ds = dataset.Value;
 
-        _T = ds.FixedFrames;      // 60
+        _T = ds.FixedFrames;       // 60
         _J = 22;                   // HumanML3D SMPL joints
         _C = cfg.JointFeatureDim;  // e.g. 64
-        _Ct = _J * _C;             // e.g. 22 * 64 = 1408
+        _Ct = _J * _C;             // e.g. 1408
+        _textDim = ds.TextEmbeddingDim; // 512
 
-        int outputDim = ds.FixedFrames * ds.FeatureDim; // 15780
+        // Text embedding → initial spatial features
+        _textToInitial = Linear(_textDim, _T * _J * _C);
+        _inputNorm = LayerNorm(_C);
 
-        // Input projection (two-stage bottleneck)
-        _inputProjection1 = Linear(ds.TextEmbeddingDim, 2048);  // 512 → 2048
-        _inputProjection2 = Linear(2048, _T * _J * _C);         // 2048 → T*J*C
-        _inputNorm = LayerNorm(_T * _J * _C);
+        // Text temporal conditioning
+        _textTemporalEmbed = Linear(_textDim, _C);
 
-        // Build adjacency matrix (not registered as parameter, lazy-moved to device)
+        // Build adjacency matrix
         var adjFlat = BuildNormalizedAdjacency();
         _adj = from_array(adjFlat).reshape(_J, _J);
 
-        // GCN layers
+        // Build sinusoidal positional encoding (T, C)
+        _posEncoding = CreatePositionalEncoding(_T, _C);
+
+        // GCN layers (per-frame spatial modeling)
         for (int i = 0; i < cfg.NumGcnLayers; i++)
         {
             _gcnLinears.Add(Linear(_C, _C));
@@ -57,25 +63,33 @@ public sealed class GcnSpatialTemporalModel : Module<Tensor, Tensor>
             _gcnDropouts.Add(Dropout(cfg.DropoutRate));
         }
 
-        // Temporal Conv1d layers
-        for (int i = 0; i < cfg.NumTemporalLayers; i++)
+        // Temporal layers with dilation
+        int[] dilations = cfg.NumTemporalLayers switch
         {
-            _temporalConvs.Add(Conv1d(_Ct, _Ct, cfg.TemporalKernelSize, stride: 1, padding: cfg.TemporalPadding));
-            _temporalBns.Add(BatchNorm1d(_Ct));
+            1 => new[] { 1 },
+            2 => new[] { 1, 2 },
+            3 => new[] { 1, 2, 4 },
+            _ => new[] { 1, 2, 4, 8 }
+        };
+
+        for (int i = 0; i < dilations.Length; i++)
+        {
+            int dilation = dilations[i];
+            int padding = (cfg.TemporalKernelSize - 1) * dilation / 2;
+            _temporalConvs.Add(Conv1d(_Ct, _Ct, cfg.TemporalKernelSize, stride: 1, padding: padding, dilation: dilation));
+            _temporalNorms.Add(LayerNorm(_Ct));
             _temporalDropouts.Add(Dropout(cfg.DropoutRate));
         }
 
-        // Output projection
-        _outputProjection = Linear(_T * _Ct, outputDim);
+        // Root (joint 0) and pose (joints 1-21) separate heads
+        _rootHead = Linear(_C, 3);
+        _poseHead = Linear(_C, 3);
 
-        // Manual registration BEFORE RegisterComponents()
-        // Register input projection components
-        register_module("input_proj_1", _inputProjection1);
-        register_module("input_proj_2", _inputProjection2);
+        // Register components
+        register_module("text_to_initial", _textToInitial);
+        register_module("text_temporal", _textTemporalEmbed);
         register_module("input_norm", _inputNorm);
-        register_module("output_proj", _outputProjection);
 
-        // Register GCN components
         for (int i = 0; i < _gcnLinears.Count; i++)
         {
             register_module($"gclinear_{i}", _gcnLinears[i]);
@@ -83,84 +97,112 @@ public sealed class GcnSpatialTemporalModel : Module<Tensor, Tensor>
             register_module($"gcdrop_{i}", _gcnDropouts[i]);
         }
 
-        // Register temporal components
         for (int i = 0; i < _temporalConvs.Count; i++)
         {
             register_module($"tconv_{i}", _temporalConvs[i]);
-            register_module($"tbn_{i}", _temporalBns[i]);
+            register_module($"tnorm_{i}", _temporalNorms[i]);
             register_module($"tdrop_{i}", _temporalDropouts[i]);
         }
+
+        register_module("root_head", _rootHead);
+        register_module("pose_head", _poseHead);
 
         RegisterComponents();
     }
 
     public override Tensor forward(Tensor input)
     {
-        // Step 1: Input projection (two-stage bottleneck)
-        // input: (B, 512)
-        var x = _inputProjection1.forward(input);  // (B, 2048)
-        x = functional.gelu(x);
+        // input: (B, 512) text embedding
+        var batchSize = input.shape[0];
+        var device = input.device;
 
-        x = _inputProjection2.forward(x);          // (B, T*J*C)
-        x = _inputNorm.forward(x);
+        // Step 1: Text → initial spatial features
+        // (B, 512) → (B, T*J*C) → (B, T, J, C)
+        var x = _textToInitial.forward(input);
         x = functional.gelu(x);
-        x = x.reshape(-1, _T, _J, _C);             // (B, T, J, C)
+        x = x.reshape(batchSize, _T, _J, _C);
 
-        // Step 2: Spatial GCN Block (shared weights across time, no inter-frame residual)
-        // GCN applies graph convolution with fixed skeleton adjacency matrix (anatomical inductive bias).
-        // Each frame is processed independently (shared weights across time T),
-        // aggregating information from neighboring joints based on skeleton connectivity.
-        var batchSize = x.shape[0];
-        x = x.reshape(batchSize * _T, _J, _C);     // (B*T, J, C)
+        // Step 2: Temporal conditioning - repeat text + positional encoding
+        // (B, 512) → (B, T, 512) → (B, T, C)
+        var textRep = input.unsqueeze(1).expand(batchSize, _T, -1);
+        var textCond = _textTemporalEmbed.forward(textRep); // (B, T, C)
+
+        // Add positional encoding to spatial features
+        var posEnc = _posEncoding.to(device).unsqueeze(0); // (1, T, C)
+        x = x + posEnc + textCond.unsqueeze(2); // broadcast textCond across joints
+
+        // Step 3: Spatial GCN (per frame)
+        x = x.reshape(batchSize * _T, _J, _C); // (B*T, J, C)
 
         var h = x;
         for (int i = 0; i < _gcnLinears.Count; i++)
         {
-            // Batched GCN aggregation: (1, J, J) @ (B*T, J, C) → (B*T, J, C)
-            // H^(l+1) = σ(D^(-1/2) A D^(-1/2) H^(l) W^(l))
-            // where A is the skeleton adjacency matrix (anatomically meaningful connections)
-            var adj = _adj.to(x.device);
-            var adjBatch = adj.unsqueeze(0);
-            var agg = matmul(adjBatch, h);         // Graph aggregation
-            var h_new = _gcnLinears[i].forward(agg);  // Linear(C, C)
+            var adj = _adj.to(device).unsqueeze(0); // (1, J, J)
+            var agg = matmul(adj, h); // Graph aggregation
+            var h_new = _gcnLinears[i].forward(agg);
             h_new = _gcnNorms[i].forward(h_new);
             h_new = functional.gelu(h_new);
             h_new = _gcnDropouts[i].forward(h_new);
-            h = h + h_new;                         // Residual within GCN stack
-            adjBatch.Dispose();
+            h = h + h_new; // Residual
             adj.Dispose();
         }
 
-        x = h.reshape(batchSize, _T, _J, _C);      // (B, T, J, C)
+        x = h.reshape(batchSize, _T, _J, _C); // (B, T, J, C)
 
-        // Step 3: Prepare for Temporal Conv1d
-        // Reshape from per-frame (T, J, C) to temporal sequence format (Ct, T)
-        // After spatial GCN, structured pose representations are concatenated across joints.
-        x = x.reshape(batchSize, _T, _J * _C);     // (B, T, Ct) where Ct = J*C
-        x = x.permute(0, 2, 1);                    // (B, Ct, T) — Conv1d format
+        // Step 4: Temporal convolutions (dilated, for longer receptive field)
+        x = x.reshape(batchSize, _T, _Ct); // (B, T, J*C)
+        x = x.permute(0, 2, 1); // (B, J*C, T)
 
-        // Step 4: Temporal Conv1d Block
-        // Conv1d with kernel=3 models local temporal dependencies (velocity consistency).
-        // This adds motion dynamics: neighboring frames influence each other,
-        // preventing physically implausible frame-to-frame discontinuities.
-        // Applies after spatial GCN so already-structured poses are linked through time.
         for (int i = 0; i < _temporalConvs.Count; i++)
         {
             var residual = x;
-            x = _temporalConvs[i].forward(x);      // (B, Ct, T)
-            x = _temporalBns[i].forward(x);
+            x = _temporalConvs[i].forward(x);
+            x = x.permute(0, 2, 1); // → (B, T, J*C)
+            x = _temporalNorms[i].forward(x);
+            x = x.permute(0, 2, 1); // → (B, J*C, T)
             x = functional.relu(x);
             x = _temporalDropouts[i].forward(x);
-            x += residual;                      // Temporal residual connection
+            x = x + residual;
         }
 
-        // Step 5: Output projection
-        x = x.permute(0, 2, 1);                    // (B, T, Ct)
-        x = x.reshape(batchSize, _T * _Ct);        // (B, T*Ct)
-        x = _outputProjection.forward(x);          // (B, FixedFrames*FeatureDim)
+        x = x.permute(0, 2, 1); // (B, T, J*C)
+        x = x.reshape(batchSize, _T, _J, _C); // (B, T, J, C)
 
-        x = x.reshape(batchSize, _T, _J * 3);      // (B, T, J*3) — joint positions only
-        return x;
+        // Step 5: Per-joint projection to 3D positions
+        // Root head: (B, T, C) → (B, T, 3)
+        var root = x.narrow(2, 0, 1).squeeze(2); // (B, T, C)
+        var rootPos = _rootHead.forward(root); // (B, T, 3)
+
+        // Pose head: (B, T, 21, C) → (B, T, 21, 3)
+        var pose = x.narrow(2, 1, _J - 1); // (B, T, 21, C)
+        pose = pose.reshape(batchSize * _T * (_J - 1), _C);
+        var posePos = _poseHead.forward(pose); // (B*T*21, 3)
+        posePos = posePos.reshape(batchSize, _T, _J - 1, 3);
+
+        // Concatenate root + pose
+        var output = cat(new[] { rootPos.unsqueeze(2), posePos }, dim: 2); // (B, T, 22, 3)
+        output = output.reshape(batchSize, _T, _J * 3);
+
+        return output;
+    }
+
+    private static Tensor CreatePositionalEncoding(int T, int C)
+    {
+        float[] pe = new float[T * C];
+
+        for (int t = 0; t < T; t++)
+        {
+            for (int c = 0; c < C; c++)
+            {
+                float freq = MathF.Pow(10000, -2f * (c / 2) / C);
+                if (c % 2 == 0)
+                    pe[t * C + c] = MathF.Sin(t * freq);
+                else
+                    pe[t * C + c] = MathF.Cos(t * freq);
+            }
+        }
+
+        return from_array(pe).reshape(T, C);
     }
 
     private static float[] BuildNormalizedAdjacency()
@@ -170,11 +212,9 @@ public sealed class GcnSpatialTemporalModel : Module<Tensor, Tensor>
 
         float[,] A = new float[J, J];
 
-        // Self-loops
         for (int i = 0; i < J; i++)
             A[i, i] = 1f;
 
-        // Tree edges (undirected)
         for (int j = 1; j < J; j++)
         {
             int p = parents[j];
@@ -182,19 +222,16 @@ public sealed class GcnSpatialTemporalModel : Module<Tensor, Tensor>
             A[p, j] = 1f;
         }
 
-        // Degree
         float[] D = new float[J];
         for (int i = 0; i < J; i++)
             for (int k = 0; k < J; k++)
                 D[i] += A[i, k];
 
-        // D^(-1/2) A D^(-1/2)
         float[,] Anorm = new float[J, J];
         for (int i = 0; i < J; i++)
             for (int k = 0; k < J; k++)
                 Anorm[i, k] = A[i, k] / (MathF.Sqrt(D[i]) * MathF.Sqrt(D[k]));
 
-        // Flatten row-major
         float[] flat = new float[J * J];
         for (int i = 0; i < J; i++)
             for (int k = 0; k < J; k++)

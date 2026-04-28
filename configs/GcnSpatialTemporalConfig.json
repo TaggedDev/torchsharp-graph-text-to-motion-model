@@ -1,10 +1,10 @@
 ﻿{
   "GcnSpatialTemporalConfig": {
-    "JointFeatureDim": 4,
-    "NumGcnLayers": 1,
-    "NumTemporalLayers": 0,
+    "JointFeatureDim": 64,
+    "NumGcnLayers": 3,
+    "NumTemporalLayers": 4,
     "TemporalKernelSize": 3,
     "TemporalPadding": 1,
-    "DropoutRate": 0.7
+    "DropoutRate": 0.1
   }
 }
