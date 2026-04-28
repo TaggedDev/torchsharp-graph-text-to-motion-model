@@ -7,7 +7,7 @@ public class TrainingSettings
     public int BatchSize { get; set; } = 32;
     public int EvaluationBatchSize { get; set; } = 32;
     public float LearningRate { get; set; } = 1e-4f;
-    public float WeightDecay { get; set; } = 0f;
+    public float WeightDecay { get; set; } = 1e-4f;
     public string Device { get; set; } = "cuda";
     public string OutputRootPath { get; set; } = string.Empty;
     public bool LoadCheckpoint { get; set; }

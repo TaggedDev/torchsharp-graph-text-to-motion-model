@@ -16,6 +16,7 @@ using IHost host = Host.CreateDefaultBuilder(args)
         config.AddJsonFile("configs/BaselineMLPModelConfig.json", optional: false, reloadOnChange: true);
         config.AddJsonFile("configs/StubModelConfig.json", optional: false, reloadOnChange: true);
         config.AddJsonFile("configs/GcnSpatialTemporalConfig.json", optional: false, reloadOnChange: true);
+        config.AddJsonFile("configs/TemporalMLPModelConfig.json", optional: false, reloadOnChange: true);
         config.AddEnvironmentVariables(prefix: "AI_");
     })
     .ConfigureServices((context, services) =>

@@ -145,23 +145,50 @@ public class HumanML3DDataset
     {
         try
         {
-            var flatArray = LoadNpyAsFloat32(path);
-
-            if (flatArray.Length != _settings.FixedFrames * _settings.FeatureDim)
-            {
-                flatArray = NormalizeAndPadOrCrop(flatArray);
-            }
-            else
-            {
-                flatArray = Normalize(flatArray);
-            }
-
-            return flatArray;
+            var fullArray = LoadNpyAsFloat32(path);
+            var jointPositions = ExtractJointPositions(fullArray);
+            var normalized = NormalizeJointPositions(jointPositions);
+            return normalized;
         }
         catch
         {
             return Array.Empty<float>();
         }
+    }
+
+    private float[] ExtractJointPositions(float[] fullMotion)
+    {
+        int fullDim = _settings.FullFeatureDim;
+        int jointStart = _settings.JointStartIdx;
+        int jointEnd = _settings.JointEndIdx;
+        int jointDim = jointEnd - jointStart;
+        int frames = fullMotion.Length / fullDim;
+
+        var extracted = new float[frames * jointDim];
+        for (int t = 0; t < frames; t++)
+        {
+            int srcOffset = t * fullDim + jointStart;
+            int dstOffset = t * jointDim;
+            Array.Copy(fullMotion, srcOffset, extracted, dstOffset, jointDim);
+        }
+        return extracted;
+    }
+
+    private float[] NormalizeJointPositions(float[] jointMotion)
+    {
+        int jointDim = _settings.JointFeatureDim;
+        if (_mean.Length < jointDim || _std.Length < jointDim)
+            return jointMotion;
+
+        var normalized = new float[jointMotion.Length];
+        for (int i = 0; i < jointMotion.Length; i++)
+        {
+            int dimIdx = i % jointDim;
+            normalized[i] = _std[dimIdx] > 1e-8f
+                ? (jointMotion[i] - _mean[dimIdx]) / _std[dimIdx]
+                : (jointMotion[i] - _mean[dimIdx]);
+        }
+        return normalized;
     }
 
     private static float[] LoadNpyAsFloat32(string path)
@@ -256,13 +283,13 @@ public class HumanML3DDataset
             motionFramesList.Add(samples[idx].MotionFrames);
         }
 
-        var textEmbTensor = CreateTensor(textEmbList, device);
-        var motionTensor = CreateTensor(motionFramesList, device);
+        var textEmbTensor = CreateTextEmbeddingTensor(textEmbList, device);
+        var motionTensor = CreateMotionTensor(motionFramesList, device, _settings);
 
         return (textEmbTensor, motionTensor);
     }
 
-    private static Tensor CreateTensor(List<float[]> data, Device device)
+    private static Tensor CreateTextEmbeddingTensor(List<float[]> data, Device device)
     {
         int batchSize = data.Count;
         int featureSize = data[0].Length;
@@ -275,6 +302,23 @@ public class HumanML3DDataset
 
         var tensor = from_array(flatArray);
         tensor = tensor.reshape(batchSize, featureSize);
+        return tensor.to(device);
+    }
+
+    private static Tensor CreateMotionTensor(List<float[]> data, Device device, DatasetSettings settings)
+    {
+        int batchSize = data.Count;
+        int jointFeatureDim = settings.JointFeatureDim;
+        int fixedFrames = settings.FixedFrames;
+
+        var flatArray = new float[batchSize * fixedFrames * jointFeatureDim];
+        for (int i = 0; i < batchSize; i++)
+        {
+            Array.Copy(data[i], 0, flatArray, i * fixedFrames * jointFeatureDim, fixedFrames * jointFeatureDim);
+        }
+
+        var tensor = from_array(flatArray);
+        tensor = tensor.reshape(batchSize, fixedFrames, jointFeatureDim);
         return tensor.to(device);
     }
 }

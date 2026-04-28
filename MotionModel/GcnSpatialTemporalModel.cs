@@ -157,8 +157,9 @@ public sealed class GcnSpatialTemporalModel : Module<Tensor, Tensor>
         // Step 5: Output projection
         x = x.permute(0, 2, 1);                    // (B, T, Ct)
         x = x.reshape(batchSize, _T * _Ct);        // (B, T*Ct)
-        x = _outputProjection.forward(x);          // (B, 15780)
+        x = _outputProjection.forward(x);          // (B, FixedFrames*FeatureDim)
 
+        x = x.reshape(batchSize, _T, _J * 3);      // (B, T, J*3) — joint positions only
         return x;
     }
 
