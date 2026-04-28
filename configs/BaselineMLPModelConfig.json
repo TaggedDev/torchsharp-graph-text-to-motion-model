@@ -1,6 +1,0 @@
-{
-  "BaselineMLPModelConfig": {
-    "HiddenDim": 1024,
-    "NumHiddenLayers": 3
-  }
-}

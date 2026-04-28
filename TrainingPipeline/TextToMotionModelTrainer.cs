@@ -18,7 +18,7 @@ public class TextToMotionModelTrainer(
     private readonly TrainingSettings _settings = trainingOptions.Value;
     private readonly PerformanceMonitor _perfMonitor = new();
     private Module<Tensor, Tensor> _textToMotionModel = textToMotionModel;
-    private readonly MotionLossFunction _lossFunction = new(velocityWeight: 1.0f, accelerationWeight: 0.1f);
+    private readonly MotionLossFunction _lossFunction = new();
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 
     public async Task TrainAsync(CancellationToken token)
@@ -115,7 +115,7 @@ public class TextToMotionModelTrainer(
             File.WriteAllText(metricsPath, JsonSerializer.Serialize(metricsLog, JsonOptions));
 
             Console.WriteLine(
-                $"  Loss breakdown: pos={trainLoss.PositionLoss:F6}, vel={trainLoss.VelocityLoss:F6}, acc={trainLoss.AccelerationLoss:F6}");
+                $"  Loss breakdown: delta={trainLoss.DeltaLoss:F6}, firstFrame={trainLoss.FirstFrameLoss:F6}");
         }
         
         var testLoss = RunEpoch(
@@ -147,12 +147,11 @@ public class TextToMotionModelTrainer(
         ProgressBarBase? parentBar = null)
     {
         if (samples.Count == 0)
-            return new EpochResult(0f, 0f, 0f, 0f);
+            return new EpochResult(0f, 0f, 0f);
 
         float totalLoss = 0f;
-        float totalPosLoss = 0f;
-        float totalVelLoss = 0f;
-        float totalAccLoss = 0f;
+        float totalDeltaLoss = 0f;
+        float totalFirstFrameLoss = 0f;
         int numBatches = 0;
 
         var indices = Enumerable.Range(0, samples.Count).ToList();
@@ -185,8 +184,7 @@ public class TextToMotionModelTrainer(
                 var (textEmb, motionFrames) = dataset.GetBatch(samples, batchIndices, device);
 
                 var predicted = model.forward(textEmb);
-
-                var (loss, posLoss, velLoss, accLoss) = _lossFunction.ComputeLoss(predicted, motionFrames);
+                var (loss, deltaLoss, firstFrameLoss) = _lossFunction.ComputeLoss(predicted, motionFrames);
 
                 if (training && optimizer is not null)
                 {
@@ -200,19 +198,17 @@ public class TextToMotionModelTrainer(
                 }
 
                 totalLoss += loss.ToSingle();
-                totalPosLoss += posLoss.ToSingle();
-                totalVelLoss += velLoss.ToSingle();
-                totalAccLoss += accLoss.ToSingle();
+                totalDeltaLoss += deltaLoss.ToSingle();
+                totalFirstFrameLoss += firstFrameLoss.ToSingle();
                 numBatches++;
                 batchBar?.Tick($"Batch {numBatches}/{totalBatches} | loss: {loss.ToSingle():F4}");
             }
         }
 
         float avgLoss = numBatches > 0 ? totalLoss / numBatches : 0f;
-        float avgPosLoss = numBatches > 0 ? totalPosLoss / numBatches : 0f;
-        float avgVelLoss = numBatches > 0 ? totalVelLoss / numBatches : 0f;
-        float avgAccLoss = numBatches > 0 ? totalAccLoss / numBatches : 0f;
-        return new EpochResult(avgLoss, avgPosLoss, avgVelLoss, avgAccLoss);
+        float avgDeltaLoss = numBatches > 0 ? totalDeltaLoss / numBatches : 0f;
+        float avgFirstFrameLoss = numBatches > 0 ? totalFirstFrameLoss / numBatches : 0f;
+        return new EpochResult(avgLoss, avgDeltaLoss, avgFirstFrameLoss);
     }
 
     private static string ResolveOutputRootPath(TrainingSettings settings)
@@ -302,9 +298,8 @@ public class TextToMotionModelTrainer(
 
     public sealed record EpochResult(
         float Loss,
-        float PositionLoss,
-        float VelocityLoss,
-        float AccelerationLoss
+        float DeltaLoss,
+        float FirstFrameLoss
     );
 
 }
