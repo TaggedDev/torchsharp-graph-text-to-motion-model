@@ -23,7 +23,6 @@ public sealed class GcnSpatialTemporalModel : Module<Tensor, Tensor>
     private readonly Linear _poseHead;
 
     private Tensor _adj;
-    private Tensor _posEncoding;
 
     private readonly int _T, _J, _C, _Ct, _textDim;
 
@@ -52,8 +51,6 @@ public sealed class GcnSpatialTemporalModel : Module<Tensor, Tensor>
         var adjFlat = BuildNormalizedAdjacency();
         _adj = from_array(adjFlat).reshape(_J, _J);
 
-        // Build sinusoidal positional encoding (T, C)
-        _posEncoding = CreatePositionalEncoding(_T, _C);
 
         // GCN layers (per-frame spatial modeling)
         for (int i = 0; i < cfg.NumGcnLayers; i++)
@@ -127,9 +124,9 @@ public sealed class GcnSpatialTemporalModel : Module<Tensor, Tensor>
         var textRep = input.unsqueeze(1).expand(batchSize, _T, -1);
         var textCond = _textTemporalEmbed.forward(textRep); // (B, T, C)
 
-        // Add positional encoding to spatial features
-        var posEnc = _posEncoding.to(device).unsqueeze(0); // (1, T, C)
-        x = x + posEnc + textCond.unsqueeze(2); // broadcast textCond across joints
+        // Add positional encoding to spatial features (sinusoidal, created fresh)
+        var posEnc = CreatePositionalEncoding(_T, _C).to(device).unsqueeze(0).unsqueeze(2); // (1, T, 1, C)
+        x = x + posEnc + textCond.unsqueeze(2); // (B, T, J, C) broadcast
 
         // Step 3: Spatial GCN (per frame)
         x = x.reshape(batchSize * _T, _J, _C); // (B*T, J, C)
