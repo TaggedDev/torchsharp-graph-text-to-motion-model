@@ -147,7 +147,8 @@ public class HumanML3DDataset
         {
             var fullArray = LoadNpyAsFloat32(path);
             var jointPositions = ExtractJointPositions(fullArray);
-            var normalized = NormalizeJointPositions(jointPositions);
+            var padded = PadOrCropJoints(jointPositions);
+            var normalized = NormalizeJointPositions(padded);
             return normalized;
         }
         catch
@@ -172,6 +173,29 @@ public class HumanML3DDataset
             Array.Copy(fullMotion, srcOffset, extracted, dstOffset, jointDim);
         }
         return extracted;
+    }
+
+    private float[] PadOrCropJoints(float[] jointPositions)
+    {
+        int jointDim = _settings.JointFeatureDim;
+        int fixedFrames = _settings.FixedFrames;
+        int targetSize = fixedFrames * jointDim;
+
+        if (jointPositions.Length == targetSize)
+            return jointPositions;
+
+        if (jointPositions.Length < targetSize)
+        {
+            var padded = new float[targetSize];
+            Array.Copy(jointPositions, padded, jointPositions.Length);
+            return padded;
+        }
+        else
+        {
+            var cropped = new float[targetSize];
+            Array.Copy(jointPositions, cropped, targetSize);
+            return cropped;
+        }
     }
 
     private float[] NormalizeJointPositions(float[] jointMotion)

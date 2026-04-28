@@ -1,7 +1,12 @@
 {
   "Dataset": {
     "FixedFrames": 60,
-    "FeatureDim": 263,
+    "FullFeatureDim": 263,
+    "JointStartIdx": 4,
+    "JointEndIdx": 70,
+    "NumJoints": 22,
+    "JointFeatureDim": 66,
+    "FeatureDim": 66,
     "TextEmbeddingDim": 512,
     "TrainSplitPath": "D:\\Code\\CSharp\\text-to-motion\\dataset\\train.txt",
     "ValidationSplitPath": "D:\\Code\\CSharp\\text-to-motion\\dataset\\val.txt",
