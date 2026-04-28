@@ -23,7 +23,9 @@ public class MotionLossFunction
         var velLoss = ComputeVelocityLoss(predicted, target);
         var accLoss = ComputeAccelerationLoss(predicted, target);
 
-        var totalLoss = posLoss + _velocityWeight * velLoss + _accelerationWeight * accLoss;
+        var smoothnessLoss = ComputeSmoothnessLoss(predicted);
+
+        var totalLoss = posLoss + _velocityWeight * velLoss + _accelerationWeight * accLoss + smoothnessLoss;
 
         return (totalLoss, posLoss, velLoss, accLoss);
     }
@@ -62,5 +64,16 @@ public class MotionLossFunction
         var targetAcc = targetT2 - 2 * targetT1 + targetT0;
 
         return functional.mse_loss(predAcc, targetAcc);
+    }
+
+    private static Tensor ComputeSmoothnessLoss(Tensor predicted)
+    {
+        long T = predicted.shape[1];
+        if (T < 2)
+            return tensor(0.0f);
+
+        var vel = predicted.narrow(1, 1, T - 1) - predicted.narrow(1, 0, T - 1);
+        var velMagnitude = (vel * vel).sum(dim: 2);
+        return velMagnitude.mean();
     }
 }
