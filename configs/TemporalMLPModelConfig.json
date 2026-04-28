@@ -1,0 +1,7 @@
+{
+  "TemporalMLPModelConfig": {
+    "HiddenDim": 512,
+    "NumHiddenLayers": 3,
+    "DropoutRate": 0.2
+  }
+}
